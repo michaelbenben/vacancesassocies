@@ -1,0 +1,93 @@
+{
+    "partners": [
+        {
+            "id": 1,
+            "name": "Nina Lucas",
+            "workDays": {
+                "1": true,
+                "2": true,
+                "3": true,
+                "4": true,
+                "5": true
+            },
+            "allocations": {
+                "vacation": 25,
+                "trainingGive": 0,
+                "trainingReceive": 0
+            },
+            "vacations": []
+        },
+        {
+            "id": 2,
+            "name": "Claire Deroy",
+            "workDays": {
+                "1": true,
+                "2": true,
+                "3": true,
+                "4": true,
+                "5": true
+            },
+            "allocations": {
+                "vacation": 25,
+                "trainingGive": 0,
+                "trainingReceive": 0
+            },
+            "vacations": []
+        },
+        {
+            "id": 3,
+            "name": "Michael Bennaim",
+            "workDays": {
+                "1": true,
+                "2": true,
+                "3": true,
+                "4": true,
+                "5": true
+            },
+            "allocations": {
+                "vacation": 25,
+                "trainingGive": 0,
+                "trainingReceive": 0
+            },
+            "vacations": []
+        },
+        {
+            "id": 4,
+            "name": "Emilie Fauchon",
+            "workDays": {
+                "1": true,
+                "2": true,
+                "3": true,
+                "4": true,
+                "5": true
+            },
+            "allocations": {
+                "vacation": 25,
+                "trainingGive": 0,
+                "trainingReceive": 0
+            },
+            "vacations": []
+        },
+        {
+            "id": 5,
+            "name": "Pauline Denoeux",
+            "workDays": {
+                "1": true,
+                "2": true,
+                "3": true,
+                "4": true,
+                "5": true
+            },
+            "allocations": {
+                "vacation": 25,
+                "trainingGive": 0,
+                "trainingReceive": 0
+            },
+            "vacations": []
+        }
+    ],
+    "settings": {
+        "countHolidaysAsLeave": false
+    },
+    "year": 2026
+}

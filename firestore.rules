@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ⚠️ ATTENTION : Ces règles permettent à TOUT LE MONDE de lire et écrire.
+    // Puisque vous n'avez pas de données sensibles, c'est acceptable pour l'instant.
+    // Si vous ajoutez de l'authentification plus tard, il faudra changer cela.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
