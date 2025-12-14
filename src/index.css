@@ -4,16 +4,17 @@
 
 :root {
   /* Brand Colors - HSL */
-  --hue-primary: 220;
-  --hue-secondary: 260;
-  --hue-success: 150;
-  --hue-danger: 10;
-  --hue-warning: 35;
+  /* Brand Colors */
+  --color-primary: #C51F84;
+  --color-primary-dark: #7C1653;
+  --color-primary-deep: #3B2257;
+  --color-primary-light: #FCE4F4;
+  /* Generated tint for backgrounds */
 
-  /* Primary Palette */
-  --color-primary: hsl(var(--hue-primary), 90%, 50%);
-  --color-primary-dark: hsl(var(--hue-primary), 90%, 40%);
-  --color-primary-light: hsl(var(--hue-primary), 90%, 95%);
+  /* Secondary Palette */
+  --color-secondary-light: #F1EFCF;
+  --color-secondary: #FBC619;
+  --color-secondary-dark: #D36514;
 
   /* Text Colors */
   --color-text-main: hsl(220, 20%, 20%);

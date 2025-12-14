@@ -66,6 +66,39 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
 }
 
 /**
+ * Calculate the number of vacation days RECOVERED by attending training on non-working days.
+ * 
+ * @param {string[]} trainingDates - Array of date strings ('YYYY-MM-DD')
+ * @param {Object} partnerWorkDays - Map of day index (0=Sun, 1=Mon... 6=Sat) to boolean
+ * @param {Object} holidays - Map of holiday dates
+ * @returns {number} count of days recovered
+ */
+export function calculateRecoveredDays(trainingDates, partnerWorkDays, holidays) {
+    let recovered = 0;
+
+    trainingDates.forEach(dateStr => {
+        const date = parseISO(dateStr);
+        const dayOfWeek = date.getDay();
+        const isWknd = isWeekend(date);
+
+        // Logic: specific to user request
+        // "s'il prend des jours de formation sur les jours où il ne travaille pas, cela lui permet de regagner des jours."
+
+        const isNormallyWorked = !isWknd && partnerWorkDays[dayOfWeek] !== false;
+
+        const holidayName = holidays[dateStr];
+        const isHoliday = !!holidayName && !isWorkedHoliday(holidayName); // True holiday (not Pentecost)
+
+        // If it is NOT a working day (Weekend OR Day Off OR Holiday), attending training earns a point.
+        if (!isNormallyWorked || isHoliday) {
+            recovered++;
+        }
+    });
+
+    return recovered;
+}
+
+/**
  * Default work schedule (Mon-Fri)
  */
 export const DEFAULT_WORK_DAYS = {

@@ -11,8 +11,13 @@ export default {
                     DEFAULT: 'var(--color-primary)',
                     dark: 'var(--color-primary-dark)',
                     light: 'var(--color-primary-light)',
+                    deep: 'var(--color-primary-deep)',
                 },
-                secondary: 'hsl(var(--hue-secondary), 60%, 50%)', // Fallback or computed
+                secondary: {
+                    DEFAULT: 'var(--color-secondary)',
+                    light: 'var(--color-secondary-light)',
+                    dark: 'var(--color-secondary-dark)',
+                },
                 text: {
                     main: 'var(--color-text-main)',
                     muted: 'var(--color-text-muted)',

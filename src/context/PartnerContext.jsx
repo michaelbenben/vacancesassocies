@@ -6,11 +6,11 @@ import { getVacationData, saveVacationData, subscribeToVacationData } from '../f
 const PartnerContext = createContext();
 
 const INITIAL_PARTNERS = [
-    { id: '1', name: 'Nina Lucas' },
-    { id: '2', name: 'Claire Deroy' },
-    { id: '3', name: 'Michael Bennaim' },
-    { id: '4', name: 'Emilie Fauchon' },
-    { id: '5', name: 'Pauline Denoeux' },
+    { id: '1', name: 'Nina' },
+    { id: '2', name: 'Claire' },
+    { id: '3', name: 'Michael' },
+    { id: '4', name: 'Emilie' },
+    { id: '5', name: 'Pauline' },
 ];
 
 const DEFAULT_ALLOCATION = {
@@ -26,10 +26,11 @@ function createDefaultData() {
             workDays: { ...DEFAULT_WORK_DAYS },
             allocations: { ...DEFAULT_ALLOCATION },
             vacations: [],
-            trainings: [],
+            trainingsGiven: [],
+            trainingsReceived: [],
         })),
         settings: {
-            countHolidaysAsLeave: false,
+            countHolidaysAsLeave: true,
         },
         year: 2026,
     };
@@ -39,9 +40,16 @@ export function PartnerProvider({ children }) {
     const [year, setYear] = useState(2026);
     const [holidays, setHolidays] = useState({});
     const [partners, setPartners] = useState([]);
-    const [settings, setSettings] = useState({ countHolidaysAsLeave: false });
+    const [settings, setSettings] = useState({ countHolidaysAsLeave: true });
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+
+    // Enforce "countHolidaysAsLeave" to true if it's ever false (Migration/Enforcement)
+    useEffect(() => {
+        if (!isLoading && settings && !settings.countHolidaysAsLeave) {
+            updateSettings({ ...settings, countHolidaysAsLeave: true });
+        }
+    }, [isLoading, settings]);
 
     // Load initial data from Firebase with timeout
     useEffect(() => {
@@ -54,9 +62,17 @@ export function PartnerProvider({ children }) {
 
                 const data = await Promise.race([getVacationData(), timeoutPromise]);
 
-                if (data) {
-                    setPartners(data.partners || []);
-                    setSettings(data.settings || { countHolidaysAsLeave: false });
+                if (data && data.partners) {
+                    // Ensure all partners have new array fields
+                    const validPartners = data.partners.map(p => ({
+                        ...p,
+                        trainingsGiven: p.trainingsGiven || [],
+                        trainingsReceived: p.trainingsReceived || [],
+                        vacations: p.vacations || []
+                    }));
+                    setPartners(validPartners);
+                    // Force true setting on load
+                    setSettings({ ...(data.settings || {}), countHolidaysAsLeave: true });
                     setYear(data.year || 2026);
                 } else {
                     // Initialize with default data
@@ -91,8 +107,14 @@ export function PartnerProvider({ children }) {
         if (isLoading) return;
 
         const unsubscribe = subscribeToVacationData((data) => {
-            if (data && !isSaving) {
-                setPartners(data.partners || []);
+            if (data && !isSaving && data.partners) {
+                const validPartners = data.partners.map(p => ({
+                    ...p,
+                    trainingsGiven: p.trainingsGiven || [],
+                    trainingsReceived: p.trainingsReceived || [],
+                    vacations: p.vacations || []
+                }));
+                setPartners(validPartners);
                 setSettings(data.settings || { countHolidaysAsLeave: false });
                 setYear(data.year || 2026);
             }
@@ -162,11 +184,72 @@ export function PartnerProvider({ children }) {
         setPartners(prev => {
             const newPartners = prev.map(p => {
                 if (p.id !== id) return p;
+
+                // Clear from trainings if adding to vacation
+                let newGiven = p.trainingsGiven || [];
+                let newReceived = p.trainingsReceived || [];
+
+                if (newGiven.includes(dateStr)) newGiven = newGiven.filter(d => d !== dateStr);
+                if (newReceived.includes(dateStr)) newReceived = newReceived.filter(d => d !== dateStr);
+
                 if (p.vacations.includes(dateStr)) {
                     return { ...p, vacations: p.vacations.filter(d => d !== dateStr) };
                 } else {
-                    return { ...p, vacations: [...p.vacations, dateStr] };
+                    return {
+                        ...p,
+                        vacations: [...p.vacations, dateStr],
+                        trainingsGiven: newGiven,
+                        trainingsReceived: newReceived
+                    };
                 }
+            });
+            saveToFirebase(newPartners, settings, year);
+            return newPartners;
+        });
+    };
+
+    const toggleTraining = (id, dateStr, type = 'given') => {
+        setPartners(prev => {
+            const newPartners = prev.map(p => {
+                if (p.id !== id) return p;
+
+                // Remove from vacation if present
+                const newVacations = p.vacations.filter(d => d !== dateStr);
+
+                // Initialize arrays if missing
+                const currentGiven = p.trainingsGiven || [];
+                const currentReceived = p.trainingsReceived || [];
+
+                let newGiven = [...currentGiven];
+                let newReceived = [...currentReceived];
+
+                if (type === 'given') {
+                    // Toggle in Given
+                    if (newGiven.includes(dateStr)) {
+                        newGiven = newGiven.filter(d => d !== dateStr);
+                    } else {
+                        // Check logic: Can we add? (Optional: Add limit check here)
+                        newGiven.push(dateStr);
+                        // Ensure exclusive: remove from Received if present
+                        newReceived = newReceived.filter(d => d !== dateStr);
+                    }
+                } else {
+                    // Toggle in Received
+                    if (newReceived.includes(dateStr)) {
+                        newReceived = newReceived.filter(d => d !== dateStr);
+                    } else {
+                        newReceived.push(dateStr);
+                        // Ensure exclusive: remove from Given if present
+                        newGiven = newGiven.filter(d => d !== dateStr);
+                    }
+                }
+
+                return {
+                    ...p,
+                    vacations: newVacations,
+                    trainingsGiven: newGiven,
+                    trainingsReceived: newReceived
+                };
             });
             saveToFirebase(newPartners, settings, year);
             return newPartners;
@@ -201,7 +284,9 @@ export function PartnerProvider({ children }) {
             updatePartner,
             updateAllocation,
             toggleWorkDay,
+            toggleWorkDay,
             toggleVacation,
+            toggleTraining,
         }}>
             {children}
         </PartnerContext.Provider>

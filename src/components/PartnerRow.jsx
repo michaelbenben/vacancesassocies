@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
-import { calculateDeductedDays } from '../utils/dateUtils';
+import { calculateDeductedDays, calculateRecoveredDays } from '../utils/dateUtils';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
@@ -18,6 +18,16 @@ export default function PartnerRow({ partner }) {
             return acc + deducted;
         }, 0);
     }, [partner.vacations, partner.workDays, holidays]);
+
+    // Calculate recovered days from training (only on non-working days)
+    const recoveredDays = useMemo(() => {
+        const given = partner.trainingsGiven || [];
+        const received = partner.trainingsReceived || [];
+        const allTrainings = [...given, ...received];
+
+        if (!allTrainings.length) return 0;
+        return calculateRecoveredDays(allTrainings, partner.workDays, holidays);
+    }, [partner.trainingsGiven, partner.trainingsReceived, partner.workDays, holidays]);
 
     // Calculate holiday days that fall on working days (when toggle is ON)
     const holidayDaysDeducted = useMemo(() => {
@@ -43,9 +53,13 @@ export default function PartnerRow({ partner }) {
     }, [holidays, partner.workDays, settings.countHolidaysAsLeave]);
 
     const totalUsed = usedVacationDays + holidayDaysDeducted;
-    const remaining = partner.allocations.vacation - totalUsed;
+    const remaining = partner.allocations.vacation - totalUsed + recoveredDays;
     const isOverLimit = remaining < 0;
-    const progressPercent = Math.min(100, (totalUsed / partner.allocations.vacation) * 100);
+
+    // Progress bar calculation (clamped between 0 and 100 for visual sanity, but logic handles overflow)
+    // Denom: Allocation + Recovered (Total available pot)
+    const totalAvailable = partner.allocations.vacation + recoveredDays;
+    const progressPercent = totalAvailable > 0 ? Math.min(100, (totalUsed / totalAvailable) * 100) : 100;
 
     return (
         <div className={`
@@ -106,8 +120,13 @@ export default function PartnerRow({ partner }) {
                                 <span className={`text-2xl font-bold tabular-nums tracking-tight ${isOverLimit ? 'text-red-500' : 'text-gray-900'}`}>
                                     {remaining}
                                 </span>
-                                <span className="text-sm font-medium text-gray-400">/ {partner.allocations.vacation}</span>
+                                <span className="text-sm font-medium text-gray-400">/ {totalAvailable}</span>
                             </div>
+                            {recoveredDays > 0 && (
+                                <p className="text-[10px] text-green-600 font-medium mt-0.5">
+                                    +{recoveredDays} récupérés
+                                </p>
+                            )}
                         </div>
 
                         <button
