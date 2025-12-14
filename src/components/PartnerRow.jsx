@@ -5,9 +5,9 @@ import { calculateDeductedDays, calculateRecoveredDays } from '../utils/dateUtil
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
-export default function PartnerRow({ partner }) {
+export default function PartnerRow({ partner, isExpanded, onToggle }) {
     const { holidays, settings, year } = usePartnerContext();
-    const [isExpanded, setIsExpanded] = useState(false);
+
     const [activeTab, setActiveTab] = useState('calendar');
 
     // Calculate vacation days used from calendar selections
@@ -67,7 +67,7 @@ export default function PartnerRow({ partner }) {
       ${isExpanded ? 'shadow-xl ring-1 ring-primary/5 scale-[1.01] z-10' : 'hover:shadow-md hover:border-gray-200'}
     `}>
             <div
-                onClick={() => setIsExpanded(!isExpanded)}
+                onClick={onToggle}
                 className="p-5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-6"
             >
 
@@ -87,7 +87,7 @@ export default function PartnerRow({ partner }) {
 
                     <div>
                         <h3 className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">
-                            {partner.name}
+                            {partner.name.split(' ')[0]}
                         </h3>
                         <div className="flex items-center gap-2 mt-1 text-sm text-gray-500 font-medium">
                             <Briefcase className="w-3.5 h-3.5" />
