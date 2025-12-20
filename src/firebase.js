@@ -80,9 +80,9 @@ export async function saveVacationData(data) {
  */
 export function subscribeToVacationData(callback) {
     const docRef = doc(db, COLLECTION, DATA_DOC);
-    return onSnapshot(docRef, (doc) => {
-        if (doc.exists()) {
-            callback(doc.data());
+    return onSnapshot(docRef, (snapshot) => {
+        if (snapshot.exists()) {
+            callback(snapshot.data(), snapshot.metadata.hasPendingWrites);
         }
     }, (error) => {
         console.error('❌ Snapshot error:', error.code, error.message);
