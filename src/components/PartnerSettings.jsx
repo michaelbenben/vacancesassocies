@@ -49,7 +49,15 @@ export default function PartnerSettings({ partner }) {
     };
 
     return (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-8 max-w-5xl mx-auto">
+            {/* Intro Text */}
+            <div className="text-center mb-2">
+                <p className="text-[11px] text-gray-400 font-medium leading-relaxed italic">
+                    Configurez ici le planning contractuel et les quotas annuels. 
+                    Le droit aux congés est automatiquement calculé au prorata du nombre de jours travaillés par semaine.
+                </p>
+            </div>
+
             {/* Work Periods Section */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">

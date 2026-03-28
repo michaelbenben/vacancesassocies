@@ -21,7 +21,7 @@ export default function CalendarView({ partner }) {
     return (
         <div className="space-y-8">
             {/* Mode Switcher */}
-            <div className="flex justify-center">
+            <div className="flex flex-col items-center gap-4">
                 <div className="inline-flex bg-gray-100 p-1 rounded-xl gap-1">
                     <button
                         onClick={() => setMode('vacation')}
@@ -67,6 +67,18 @@ export default function CalendarView({ partner }) {
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
                         Ajustements
                     </button>
+                </div>
+
+                {/* Mode Explanation Text */}
+                <div className="max-w-xl text-center animate-in fade-in slide-in-from-top-1 duration-300">
+                    <p className="text-[11px] font-medium text-gray-500 leading-relaxed italic">
+                        {mode === 'vacation' && "Décompté du solde annuel. Un jour de congé posé sur un jour travaillé réduit le solde de 1."}
+                        {mode === 'given' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
+                        {mode === 'received' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
+                        {mode === 'afvac' && "Absence pour congrès. Décomptée des jours travaillés mais n'impacte pas le solde de congés."}
+                        {mode === 'sick' && "Absence maladie. Décomptée des jours travaillés mais n'impacte pas le solde de congés."}
+                        {mode === 'adjustment' && "Modifications manuelles du planning. Ajoutez un jour (+) ou retirez-en un (-) pour ajuster le total travaillé."}
+                    </p>
                 </div>
             </div>
 
