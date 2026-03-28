@@ -398,11 +398,110 @@ export function PartnerProvider({ children }) {
                 newExceptions[dateStr] = true; // Forced Worked (+)
             }
         } else {
-            // Already has an adjustment? Then Clicking ALWAYS returns to Neutral
+            // Revert to normal
             delete newExceptions[dateStr];
         }
 
         updateYearSpecific(id, year, {
+            workDayExceptions: newExceptions
+        });
+    };
+
+    const applyBatchDates = (id, dates, mode, action) => {
+        // action: 'add' or 'remove'
+        const partner = database.partners.find(p => p.id === id);
+        if (!partner) return;
+        const current = getYearData(partner, year);
+        
+        let newVacations = [...current.vacations];
+        let newGiven = [...current.trainingsGiven];
+        let newReceived = [...current.trainingsReceived];
+        let newAFVAC = [...(current.afvac || [])];
+        let newSick = [...(current.sickLeave || [])];
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+
+        dates.forEach(dateStr => {
+            if (mode === 'vacation') {
+                if (action === 'remove') {
+                    newVacations = newVacations.filter(d => d !== dateStr);
+                } else {
+                    if (!newVacations.includes(dateStr)) newVacations.push(dateStr);
+                    newGiven = newGiven.filter(d => d !== dateStr);
+                    newReceived = newReceived.filter(d => d !== dateStr);
+                    delete newExceptions[dateStr];
+                }
+            } else if (mode === 'given') {
+                if (action === 'remove') {
+                    newGiven = newGiven.filter(d => d !== dateStr);
+                } else {
+                    if (!newGiven.includes(dateStr)) newGiven.push(dateStr);
+                    newVacations = newVacations.filter(d => d !== dateStr);
+                    newReceived = newReceived.filter(d => d !== dateStr);
+                    delete newExceptions[dateStr];
+                }
+            } else if (mode === 'received') {
+                if (action === 'remove') {
+                    newReceived = newReceived.filter(d => d !== dateStr);
+                } else {
+                    if (!newReceived.includes(dateStr)) newReceived.push(dateStr);
+                    newVacations = newVacations.filter(d => d !== dateStr);
+                    newGiven = newGiven.filter(d => d !== dateStr);
+                    delete newExceptions[dateStr];
+                }
+            } else if (mode === 'afvac') {
+                if (action === 'remove') {
+                    newAFVAC = newAFVAC.filter(d => d !== dateStr);
+                } else {
+                    if (!newAFVAC.includes(dateStr)) newAFVAC.push(dateStr);
+                    newVacations = newVacations.filter(d => d !== dateStr);
+                    newGiven = newGiven.filter(d => d !== dateStr);
+                    newReceived = newReceived.filter(d => d !== dateStr);
+                    newSick = newSick.filter(d => d !== dateStr);
+                    delete newExceptions[dateStr];
+                }
+            } else if (mode === 'sick') {
+                if (action === 'remove') {
+                    newSick = newSick.filter(d => d !== dateStr);
+                } else {
+                    if (!newSick.includes(dateStr)) newSick.push(dateStr);
+                    newVacations = newVacations.filter(d => d !== dateStr);
+                    newGiven = newGiven.filter(d => d !== dateStr);
+                    newReceived = newReceived.filter(d => d !== dateStr);
+                    newAFVAC = newAFVAC.filter(d => d !== dateStr);
+                    delete newExceptions[dateStr];
+                }
+            } else if (mode === 'adjustment') {
+                const hasOtherAction = 
+                    current.vacations.includes(dateStr) || 
+                    current.trainingsGiven.includes(dateStr) || 
+                    current.trainingsReceived.includes(dateStr) || 
+                    current.afvac.includes(dateStr) || 
+                    current.sickLeave.includes(dateStr);
+        
+                if (hasOtherAction) return;
+        
+                const dayOfWeek = new Date(dateStr).getDay();
+                const currentWorkDays = getWorkDaysForDate(dateStr, current.workPeriods) || current.workDays || {};
+                const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+        
+                if (action === 'remove') {
+                    delete newExceptions[dateStr];
+                } else {
+                    if (isNormallyWorked) {
+                        newExceptions[dateStr] = false;
+                    } else {
+                        newExceptions[dateStr] = true;
+                    }
+                }
+            }
+        });
+
+        updateYearSpecific(id, year, {
+            vacations: newVacations,
+            trainingsGiven: newGiven,
+            trainingsReceived: newReceived,
+            afvac: newAFVAC,
+            sickLeave: newSick,
             workDayExceptions: newExceptions
         });
     };
@@ -442,6 +541,7 @@ export function PartnerProvider({ children }) {
             toggleAFVAC,
             toggleSickLeave,
             toggleWorkDayException,
+            applyBatchDates,
             isSaving
         }}>
             {children}

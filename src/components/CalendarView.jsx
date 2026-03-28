@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { eachMonthOfInterval, endOfMonth, endOfYear, eachDayOfInterval, format, getDay, isWeekend, startOfYear } from 'date-fns';
+import { useState, useEffect } from 'react';
+import { eachMonthOfInterval, endOfMonth, endOfYear, eachDayOfInterval, format, getDay, isWeekend, startOfYear, parseISO, isBefore, isAfter } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { usePartnerContext } from '../context/PartnerContext';
 import { isWorkedHoliday } from '../utils/holidays';
@@ -7,8 +7,58 @@ import { getWorkDaysForDate } from '../utils/dateUtils';
 import { GraduationCap, Umbrella, BookOpen, Activity } from 'lucide-react';
 
 export default function CalendarView({ partner }) {
-    const { year, holidays, toggleVacation, toggleTraining, toggleAFVAC, toggleSickLeave, toggleWorkDayException } = usePartnerContext();
+    const { year, holidays } = usePartnerContext();
     const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac' | 'sick' | 'adjustment'
+
+    const { applyBatchDates } = usePartnerContext();
+
+    const [dragState, setDragState] = useState({
+        isDragging: false,
+        start: null,
+        current: null,
+        action: null
+    });
+
+    useEffect(() => {
+        const handleMouseUp = () => {
+            if (dragState.isDragging) {
+                if (dragState.start && dragState.current) {
+                    let start = parseISO(dragState.start);
+                    let end = parseISO(dragState.current);
+                    if (isBefore(end, start)) {
+                        const temp = start;
+                        start = end;
+                        end = temp;
+                    }
+                    
+                    const days = eachDayOfInterval({ start, end });
+                    const dateStrings = days.map(d => format(d, 'yyyy-MM-dd'));
+                    
+                    applyBatchDates(partner.id, dateStrings, mode, dragState.action);
+                }
+                setDragState({ isDragging: false, start: null, current: null, action: null });
+            }
+        };
+
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => window.removeEventListener('mouseup', handleMouseUp);
+    }, [dragState, applyBatchDates, partner.id, mode]);
+
+    const handleDragStart = (e, dateStr, isCurrentlyActioned) => {
+        e.preventDefault();
+        setDragState({
+            isDragging: true,
+            start: dateStr,
+            current: dateStr,
+            action: isCurrentlyActioned ? 'remove' : 'add'
+        });
+    };
+
+    const handleDragEnter = (dateStr) => {
+        if (dragState.isDragging) {
+            setDragState(prev => ({ ...prev, current: dateStr }));
+        }
+    };
 
     const yearStart = startOfYear(new Date(year, 0, 1));
     const yearEnd = endOfYear(yearStart);
@@ -90,14 +140,10 @@ export default function CalendarView({ partner }) {
                         year={year}
                         partner={partner}
                         holidays={holidays}
-                        onToggle={(id, date) => {
-                            if (mode === 'vacation') toggleVacation(partner.id, date);
-                            else if (mode === 'given' || mode === 'received') toggleTraining(partner.id, date, mode);
-                            else if (mode === 'afvac') toggleAFVAC(partner.id, date);
-                            else if (mode === 'sick') toggleSickLeave(partner.id, date);
-                            else if (mode === 'adjustment') toggleWorkDayException(partner.id, date);
-                        }}
                         mode={mode}
+                        dragState={dragState}
+                        onDragStart={handleDragStart}
+                        onDragEnter={handleDragEnter}
                     />
                 ))}
             </div>
@@ -118,7 +164,20 @@ export default function CalendarView({ partner }) {
     );
 }
 
-function MonthGrid({ monthStart, partner, holidays, onToggle, mode }) {
+const isDateInRange = (dateStr, startStr, endStr) => {
+    if (!startStr || !endStr) return false;
+    let start = parseISO(startStr);
+    let end = parseISO(endStr);
+    if (isBefore(end, start)) {
+        const temp = start;
+        start = end;
+        end = temp;
+    }
+    const date = parseISO(dateStr);
+    return !isBefore(date, start) && !isAfter(date, end);
+};
+
+function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart, onDragEnter }) {
     const monthEnd = endOfMonth(monthStart);
     const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
@@ -210,14 +269,31 @@ function MonthGrid({ monthStart, partner, holidays, onToggle, mode }) {
                         isDisabled = false;
                     }
 
+                    const inDragRange = isDateInRange(dateStr, dragState.start, dragState.current);
+                    const dragClasses = inDragRange ? `ring-2 ring-offset-1 ${dragState.action === 'add' ? 'ring-primary' : 'ring-red-400 opacity-50'}` : '';
+
                     return (
                         <button
                             key={dateStr}
                             disabled={isDisabled}
-                            onClick={() => onToggle(partner.id, dateStr)}
+                            onMouseDown={(e) => {
+                                if (isDisabled) return;
+                                let isActioned = false;
+                                if (mode === 'vacation') isActioned = isVacation;
+                                else if (mode === 'given') isActioned = isGiven;
+                                else if (mode === 'received') isActioned = isReceived;
+                                else if (mode === 'afvac') isActioned = isAFVAC;
+                                else if (mode === 'sick') isActioned = isSick;
+                                else if (mode === 'adjustment') isActioned = exception !== undefined;
+                                onDragStart(e, dateStr, isActioned);
+                            }}
+                            onMouseEnter={() => {
+                                if (!isDisabled) onDragEnter(dateStr);
+                            }}
                             className={`
                 h-9 w-9 rounded-lg flex items-center justify-center text-xs transition-all duration-200 relative group/day
                 ${stateClasses}
+                ${dragClasses}
                 ${!isDisabled && mode === 'given' && !isGiven && !isVacation && !isReceived && !isAFVAC && !isSick ? 'hover:border-purple-300 hover:text-purple-600' : ''}
                 ${!isDisabled && mode === 'received' && !isReceived && !isVacation && !isGiven && !isAFVAC && !isSick ? 'hover:border-orange-300 hover:text-orange-600' : ''}
                 ${!isDisabled && mode === 'afvac' && partner.allocations.hasAFVAC && !isAFVAC && !isVacation && !isGiven && !isReceived && !isSick ? 'hover:border-[#FBC619] hover:text-[#FBC619]' : ''}
