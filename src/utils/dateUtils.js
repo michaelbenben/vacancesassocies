@@ -1,4 +1,4 @@
-import { isWeekend, parseISO, eachDayOfInterval, format } from 'date-fns';
+import { isWeekend, parseISO, eachDayOfInterval, startOfYear, endOfYear, format } from 'date-fns';
 import { isWorkedHoliday } from './holidays';
 
 /**
@@ -6,12 +6,13 @@ import { isWorkedHoliday } from './holidays';
  * 
  * @param {Date|string} start - Start date of the leave
  * @param {Date|string} end - End date of the leave
- * @param {Object} partnerWorkDays - Map of day index (0=Sun, 1=Mon... 6=Sat) to boolean
- * @param {Object} holidays - Map of 'YYYY-MM-DD' -> 'Holiday Name' (from getFrenchHolidays)
- * @param {boolean} countHolidaysAsLeave - Config option: if true, holidays count as leave days (rare, usually false)
+ * @param {Object} partnerWorkDays - Map of day index (0=Sun, 1=Mon... 6=Sat) to boolean (Fallback if no periods)
+ * @param {Object} holidays - Map of 'YYYY-MM-DD' -> 'Holiday Name'
+ * @param {boolean} countHolidaysAsLeave - Config option
+ * @param {Array} workPeriods - Optional array of { startDate, workDays }
  * @returns {number} count of days deducted
  */
-export function calculateDeductedDays(start, end, partnerWorkDays, holidays, countHolidaysAsLeave = false) {
+export function calculateDeductedDays(start, end, partnerWorkDays, holidays, countHolidaysAsLeave = false, workPeriods = [], workDayExceptions = {}) {
     const startDate = typeof start === 'string' ? parseISO(start) : start;
     const endDate = typeof end === 'string' ? parseISO(end) : end;
 
@@ -21,44 +22,124 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
     let count = 0;
 
     days.forEach(day => {
-        // 1. Check if it's a weekend. No partner works weekends.
-        if (isWeekend(day)) {
-            return;
-        }
-
         const dateStr = format(day, 'yyyy-MM-dd');
         const dayOfWeek = day.getDay(); // 0-6, 0 is Sunday
+        const holidayName = holidays[dateStr];
+        const exception = workDayExceptions[dateStr];
 
-        // 2. Check if the partner normally works on this day of the week
-        // partnerWorkDays is expected to be: { 1: true, 2: true, ... } (Mon-Fri)
-        // If undefined, assume true? No, default to true, but code should provide it.
-        // If partner doesn't work this day (e.g. Wednesday), it doesn't count as leave.
-        if (partnerWorkDays[dayOfWeek] === false) {
+        // determine if this day should be treated as normally worked
+        let isNormallyWorked = false;
+        if (exception !== undefined) {
+            isNormallyWorked = exception === true;
+        } else {
+            // weekends: no one works without exception
+            if (isWeekend(day)) {
+                isNormallyWorked = false;
+            } else {
+                // public holidays (except pentecote) are off for deduction
+                if (holidayName && !isWorkedHoliday(holidayName) && !countHolidaysAsLeave) {
+                    isNormallyWorked = false;
+                } else {
+                    const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
+                    isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+                }
+            }
+        }
+
+        if (isNormallyWorked) {
+            count++;
+        }
+    });
+
+    return count;
+}
+
+/**
+ * @deprecated Le mécanisme de récupération est supprimé. Les formations sur jours
+ * non travaillés sont désormais comptées comme jours travaillés supplémentaires.
+ * Conservée ici pour éviter de casser d'éventuels appelants existants.
+ */
+export function calculateRecoveredDays() {
+    return 0;
+}
+
+/**
+ * Calculate the total number of worked days in a year for a specific partner.
+ *
+ * Worked days = all normal working days in the year (incl. Lundi de Pentecôte)
+ *               - congés pris
+ *               - jours AFVAC (pris sur temps de travail)
+ *               + formations reçues sur jours non travaillés (elles sont travaillées)
+ *               + formations données sur jours non travaillés (elles sont travaillées)
+ *
+ * Note: les jours AFVAC ne comptent PAS comme du travail. S'ils tombent sur un
+ * jour normalement travaillé, ils réduisent le décompte des jours travaillés.
+ *
+ * @param {number} year
+ * @param {Object} partnerWorkDays - Fallback if periods is empty
+ * @param {Object} holidays
+ * @param {string[]} vacations
+ * @param {string[]} trainingsReceived
+ * @param {string[]} trainingsGiven
+ * @param {string[]} afvac
+ * @param {Array} workPeriods
+ * @returns {number}
+ */
+export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations = [], trainingsReceived = [], trainingsGiven = [], afvac = [], workPeriods = [], sickLeave = [], workDayExceptions = {}) {
+    const yearStart = startOfYear(new Date(year, 0, 1));
+    const yearEnd = endOfYear(yearStart);
+    const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
+
+    const vacationSet = new Set(vacations);
+    const afvacSet = new Set(afvac);
+    const sickLeaveSet = new Set(sickLeave);
+    // Only training types count as worked even on non-scheduled days
+    const extraWorkedDays = new Set([...trainingsReceived, ...trainingsGiven]);
+
+    let count = 0;
+
+    days.forEach(day => {
+        // Never count weekends
+        if (isWeekend(day)) return;
+
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const dayOfWeek = day.getDay();
+
+        const exception = workDayExceptions[dateStr];
+
+        // Never count public holidays (except Lundi de Pentecôte which is worked)
+        // UNLESS there is a manual adjustment forcing it to be worked (+)
+        const holidayName = holidays[dateStr];
+        if (holidayName && exception !== true) {
+            const isPentecote = holidayName.toLowerCase().includes('pentecôte');
+            if (!isPentecote) return;
+        }
+
+        // Formations (reçues ou données) on non-scheduled days = extra worked day
+        if (extraWorkedDays.has(dateStr)) {
+            count++;
             return;
         }
 
-        // 3. Check for public holidays
-        const holidayName = holidays[dateStr];
-        if (holidayName) {
-            // It is a holiday.
-            const isPentecote = isWorkedHoliday(holidayName);
-
-            if (isPentecote) {
-                // Pentecost is a WORKED day.
-                // If it's a worked day, and the partner is taking leave, does it count?
-                // YES. If everyone works Pentecost, taking it off costs a vacation day.
-                count++;
-                return;
-            }
-
-            // Other holidays (Christmas, New Year, etc.)
-            if (!countHolidaysAsLeave) {
-                // Usually, you don't burn a leave day for a public holiday.
-                return;
-            }
+        // Check for manual exceptions
+        let isNormallyWorked = false;
+        if (exception !== undefined) {
+            isNormallyWorked = exception === true;
+        } else {
+            // 2. Check work days for this specific date (from periods or global)
+            const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
+            isNormallyWorked = currentWorkDays[dayOfWeek] === true;
         }
 
-        // If we're here: It's weekday, partner works it, not a free holiday.
+        // Skip days the partner doesn't work (normally or by exception)
+        if (!isNormallyWorked) return;
+
+        // Skip vacation days
+        if (vacationSet.has(dateStr)) return;
+
+        // AFVAC or Sick Leave on working days = not worked
+        if (afvacSet.has(dateStr) || sickLeaveSet.has(dateStr)) return;
+
         count++;
     });
 
@@ -66,41 +147,67 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
 }
 
 /**
- * Calculate the number of vacation days RECOVERED by attending training on non-working days.
- * 
- * @param {string[]} trainingDates - Array of date strings ('YYYY-MM-DD')
- * @param {Object} partnerWorkDays - Map of day index (0=Sun, 1=Mon... 6=Sat) to boolean
- * @param {Object} holidays - Map of holiday dates
- * @returns {number} count of days recovered
+ * Find the work days schedule for a specific date given a list of periods.
  */
-export function calculateRecoveredDays(trainingDates, partnerWorkDays, holidays) {
-    let recovered = 0;
+export function getWorkDaysForDate(date, workPeriods = []) {
+    if (!workPeriods || workPeriods.length === 0) return null;
 
-    trainingDates.forEach(dateStr => {
-        const date = parseISO(dateStr);
-        const dayOfWeek = date.getDay();
-        const isWknd = isWeekend(date);
+    // Sort periods by date descending
+    const sorted = [...workPeriods].sort((a, b) => b.startDate.localeCompare(a.startDate));
 
-        // Logic: specific to user request
-        // "s'il prend des jours de formation sur les jours où il ne travaille pas, cela lui permet de regagner des jours."
+    // Find the first period that is <= date
+    const dateStr = typeof date === 'string' ? date : format(date, 'yyyy-MM-dd');
+    const period = sorted.find(p => p.startDate <= dateStr);
 
-        const isNormallyWorked = !isWknd && partnerWorkDays[dayOfWeek] !== false;
-
-        const holidayName = holidays[dateStr];
-        const isHoliday = !!holidayName && !isWorkedHoliday(holidayName); // True holiday (not Pentecost)
-
-        // If it is NOT a working day (Weekend OR Day Off OR Holiday), attending training earns a point.
-        if (!isNormallyWorked || isHoliday) {
-            recovered++;
-        }
-    });
-
-    return recovered;
+    return period ? period.workDays : null;
 }
 
 /**
- * Default work schedule (Mon-Fri)
+ * Calculate the total vacation allocation for the year based on work periods.
+ * Rule: 5 weeks * (weighted average of days worked per week).
  */
+export function calculateAnnualVacationAllocation(year, workPeriods = [], fallbackWorkDays = null) {
+    const yearStart = startOfYear(new Date(year, 0, 1));
+    const yearEnd = endOfYear(yearStart);
+    const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
+    const totalDaysInYear = days.length;
+
+    let totalWeightedDays = 0;
+
+    days.forEach(day => {
+        const currentWorkDays = getWorkDaysForDate(day, workPeriods) || fallbackWorkDays || DEFAULT_WORK_DAYS;
+        // Count how many days are worked in this week schedule
+        const daysPerWeek = Object.values(currentWorkDays).filter(v => v === true).length;
+        totalWeightedDays += daysPerWeek;
+    });
+
+    const averageDaysPerWeek = totalWeightedDays / totalDaysInYear;
+    // Round to 0.5 for UX clarity (optional, but requested by some systems)
+    return Math.round(averageDaysPerWeek * 5 * 2) / 2;
+}
+
+/**
+ * Calculate the "normal" training allocation (1 week per year).
+ * Rule: 1 week * (weighted average of days worked per week).
+ */
+export function calculateNormalTrainingAllocation(year, workPeriods = [], fallbackWorkDays = null) {
+    const yearStart = startOfYear(new Date(year, 0, 1));
+    const yearEnd = endOfYear(yearStart);
+    const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
+    const totalDaysInYear = days.length;
+
+    let totalWeightedDays = 0;
+
+    days.forEach(day => {
+        const currentWorkDays = getWorkDaysForDate(day, workPeriods) || fallbackWorkDays || DEFAULT_WORK_DAYS;
+        const daysPerWeek = Object.values(currentWorkDays).filter(v => v === true).length;
+        totalWeightedDays += daysPerWeek;
+    });
+
+    const averageDaysPerWeek = totalWeightedDays / totalDaysInYear;
+    return Math.round(averageDaysPerWeek * 2) / 2;
+}
+
 export const DEFAULT_WORK_DAYS = {
     1: true, // Mon
     2: true, // Tue

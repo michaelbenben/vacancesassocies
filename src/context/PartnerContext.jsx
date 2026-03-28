@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getFrenchHolidays } from '../utils/holidays';
-import { DEFAULT_WORK_DAYS } from '../utils/dateUtils';
+import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation, getWorkDaysForDate } from '../utils/dateUtils';
 import { getVacationData, saveVacationData, subscribeToVacationData } from '../firebase';
 
 const PartnerContext = createContext();
@@ -15,8 +15,11 @@ const INITIAL_PARTNERS = [
 
 const DEFAULT_ALLOCATION = {
     vacation: 25,
+    vacationBonus: 0,
     trainingGive: 0,
     trainingReceive: 0,
+    hasAFVAC: true,
+    hasSickLeave: true,
 };
 
 function createDefaultData() {
@@ -24,16 +27,43 @@ function createDefaultData() {
         partners: INITIAL_PARTNERS.map(p => ({
             ...p,
             workDays: { ...DEFAULT_WORK_DAYS },
+            workPeriods: [
+                { startDate: `${new Date().getFullYear()}-01-01`, workDays: { ...DEFAULT_WORK_DAYS } }
+            ],
             allocations: { ...DEFAULT_ALLOCATION },
             vacations: [],
             trainingsGiven: [],
             trainingsReceived: [],
             afvac: [],
+            sickLeave: [],
         })),
         settings: {
             countHolidaysAsLeave: true,
         },
         year: 2026,
+    };
+}
+
+function sanitizeDatabase(data) {
+    if (!data || !data.partners) return data;
+    return {
+        ...data,
+        partners: data.partners.map(p => ({
+            ...p,
+            allocations: {
+                ...DEFAULT_ALLOCATION,
+                ...p.allocations,
+                hasAFVAC: p.allocations?.hasAFVAC !== undefined ? p.allocations.hasAFVAC : true,
+                hasSickLeave: p.allocations?.hasSickLeave !== undefined ? p.allocations.hasSickLeave : true
+            },
+            yearSpecific: Object.keys(p.yearSpecific || {}).reduce((acc, yearKey) => {
+                acc[yearKey] = {
+                    ...p.yearSpecific[yearKey],
+                    workDayExceptions: p.yearSpecific[yearKey].workDayExceptions || {}
+                };
+                return acc;
+            }, {})
+        }))
     };
 }
 
@@ -57,7 +87,8 @@ export function PartnerProvider({ children }) {
                 const data = await Promise.race([getVacationData(), timeoutPromise]);
 
                 if (data && data.partners) {
-                    setDatabase(data);
+                    const sanitizedData = sanitizeDatabase(data);
+                    setDatabase(sanitizedData);
                     if (data.year) setYear(data.year);
                 } else {
                     const defaultData = createDefaultData();
@@ -80,7 +111,7 @@ export function PartnerProvider({ children }) {
 
         const unsubscribe = subscribeToVacationData((data, hasPendingWrites) => {
             if (data && !hasPendingWrites && !isSavingRef.current && data.partners) {
-                setDatabase(data);
+                setDatabase(sanitizeDatabase(data));
             }
         });
 
@@ -108,16 +139,30 @@ export function PartnerProvider({ children }) {
     }, []);
 
     // Helper to get current view data for a specific partner and year
+    // Helper to get current view data for a specific partner and year
     const getYearData = useCallback((p, y) => {
         const ys = p.yearSpecific || {};
         const data = ys[y] || {};
+        const workPeriods = data.workPeriods || p.workPeriods || [
+            { startDate: `${y}-01-01`, workDays: data.workDays || p.workDays || { ...DEFAULT_WORK_DAYS } }
+        ];
+        
+        const allocations = { ... (data.allocations || p.allocations || DEFAULT_ALLOCATION ) };
+        
+        // Auto-calculate vacation allocation based on periods
+        const baseVacation = calculateAnnualVacationAllocation(y, workPeriods, data.workDays || p.workDays);
+        allocations.vacation = baseVacation + (allocations.vacationBonus || 0);
+        
         return {
             workDays: data.workDays || p.workDays || { ...DEFAULT_WORK_DAYS },
-            allocations: data.allocations || p.allocations || { ...DEFAULT_ALLOCATION },
+            workPeriods,
+            allocations,
             vacations: data.vacations || [],
             trainingsGiven: data.trainingsGiven || [],
             trainingsReceived: data.trainingsReceived || [],
-            afvac: data.afvac || []
+            afvac: data.afvac || [],
+            sickLeave: data.sickLeave || [],
+            workDayExceptions: data.workDayExceptions || {}
         };
     }, []);
 
@@ -166,12 +211,31 @@ export function PartnerProvider({ children }) {
         });
     };
 
-    const toggleWorkDay = (id, dayIndex) => {
+    const toggleWorkDay = (id, dayIndex, periodIndex = 0) => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
+        
+        const newPeriods = [...current.workPeriods];
+        if (newPeriods[periodIndex]) {
+            newPeriods[periodIndex] = {
+                ...newPeriods[periodIndex],
+                workDays: {
+                    ...newPeriods[periodIndex].workDays,
+                    [dayIndex]: !newPeriods[periodIndex].workDays[dayIndex]
+                }
+            };
+        }
+
         updateYearSpecific(id, year, {
-            workDays: { ...current.workDays, [dayIndex]: !current.workDays[dayIndex] }
+            workPeriods: newPeriods,
+            workDays: newPeriods[0].workDays // Fallback for old code
+        });
+    };
+
+    const updateWorkPeriods = (id, newPeriods) => {
+        updateYearSpecific(id, year, {
+            workPeriods: newPeriods
         });
     };
 
@@ -183,6 +247,7 @@ export function PartnerProvider({ children }) {
         let newVacations = [...current.vacations];
         let newGiven = [...current.trainingsGiven];
         let newReceived = [...current.trainingsReceived];
+        let newExceptions = { ...(current.workDayExceptions || {}) };
 
         if (newVacations.includes(dateStr)) {
             newVacations = newVacations.filter(d => d !== dateStr);
@@ -190,16 +255,16 @@ export function PartnerProvider({ children }) {
             newVacations.push(dateStr);
             newGiven = newGiven.filter(d => d !== dateStr);
             newReceived = newReceived.filter(d => d !== dateStr);
-            updateYearSpecific(id, year, {
-                afvac: (current.afvac || []).filter(d => d !== dateStr)
-            });
+            delete newExceptions[dateStr];
         }
 
         updateYearSpecific(id, year, {
             vacations: newVacations,
             trainingsGiven: newGiven,
             trainingsReceived: newReceived,
-            afvac: (current.afvac || []).filter(d => d !== dateStr)
+            afvac: (current.afvac || []).filter(d => d !== dateStr),
+            sickLeave: (current.sickLeave || []).filter(d => d !== dateStr),
+            workDayExceptions: newExceptions
         });
     };
 
@@ -211,6 +276,7 @@ export function PartnerProvider({ children }) {
         let newVacations = current.vacations.filter(d => d !== dateStr);
         let newGiven = [...current.trainingsGiven];
         let newReceived = [...current.trainingsReceived];
+        let newExceptions = { ...(current.workDayExceptions || {}) };
 
         if (type === 'given') {
             if (newGiven.includes(dateStr)) {
@@ -218,6 +284,7 @@ export function PartnerProvider({ children }) {
             } else {
                 newGiven.push(dateStr);
                 newReceived = newReceived.filter(d => d !== dateStr);
+                delete newExceptions[dateStr];
             }
         } else {
             if (newReceived.includes(dateStr)) {
@@ -225,6 +292,7 @@ export function PartnerProvider({ children }) {
             } else {
                 newReceived.push(dateStr);
                 newGiven = newGiven.filter(d => d !== dateStr);
+                delete newExceptions[dateStr];
             }
         }
 
@@ -232,7 +300,9 @@ export function PartnerProvider({ children }) {
             vacations: newVacations,
             trainingsGiven: newGiven,
             trainingsReceived: newReceived,
-            afvac: (current.afvac || []).filter(d => d !== dateStr)
+            afvac: (current.afvac || []).filter(d => d !== dateStr),
+            sickLeave: (current.sickLeave || []).filter(d => d !== dateStr),
+            workDayExceptions: newExceptions
         });
     };
 
@@ -245,18 +315,95 @@ export function PartnerProvider({ children }) {
         let newVacations = current.vacations.filter(d => d !== dateStr);
         let newGiven = current.trainingsGiven.filter(d => d !== dateStr);
         let newReceived = current.trainingsReceived.filter(d => d !== dateStr);
+        let newSick = (current.sickLeave || []).filter(d => d !== dateStr);
+        let newExceptions = { ...(current.workDayExceptions || {}) };
 
         if (newAFVAC.includes(dateStr)) {
             newAFVAC = newAFVAC.filter(d => d !== dateStr);
         } else {
             newAFVAC.push(dateStr);
+            delete newExceptions[dateStr];
         }
 
         updateYearSpecific(id, year, {
             vacations: newVacations,
             trainingsGiven: newGiven,
             trainingsReceived: newReceived,
-            afvac: newAFVAC
+            afvac: newAFVAC,
+            sickLeave: newSick,
+            workDayExceptions: newExceptions
+        });
+    };
+
+    const toggleSickLeave = (id, dateStr) => {
+        const partner = database.partners.find(p => p.id === id);
+        if (!partner) return;
+        const current = getYearData(partner, year);
+
+        let newSick = [...(current.sickLeave || [])];
+        let newVacations = current.vacations.filter(d => d !== dateStr);
+        let newGiven = current.trainingsGiven.filter(d => d !== dateStr);
+        let newReceived = current.trainingsReceived.filter(d => d !== dateStr);
+        let newAFVAC = (current.afvac || []).filter(d => d !== dateStr);
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+
+        if (newSick.includes(dateStr)) {
+            newSick = newSick.filter(d => d !== dateStr);
+        } else {
+            newSick.push(dateStr);
+            delete newExceptions[dateStr];
+        }
+
+        updateYearSpecific(id, year, {
+            vacations: newVacations,
+            trainingsGiven: newGiven,
+            trainingsReceived: newReceived,
+            afvac: newAFVAC,
+            sickLeave: newSick,
+            workDayExceptions: newExceptions
+        });
+    };
+
+    const toggleWorkDayException = (id, dateStr) => {
+        const partner = database.partners.find(p => p.id === id);
+        if (!partner) return;
+        
+        const current = getYearData(partner, year);
+
+        // Check for ANY other status on this day. If exists, block adjustment.
+        const hasOtherAction = 
+            current.vacations.includes(dateStr) || 
+            current.trainingsGiven.includes(dateStr) || 
+            current.trainingsReceived.includes(dateStr) || 
+            current.afvac.includes(dateStr) || 
+            current.sickLeave.includes(dateStr);
+
+        if (hasOtherAction) return;
+
+        const newExceptions = { ...(current.workDayExceptions || {}) };
+        
+        // Determine if day is already worked in base schedule
+        const dayOfWeek = new Date(dateStr).getDay();
+        const currentWorkDays = getWorkDaysForDate(dateStr, current.workPeriods) || current.workDays || {};
+        const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+
+        const currentValue = newExceptions[dateStr];
+
+        if (currentValue === undefined) {
+            // If normally worked, we can only subtract
+            if (isNormallyWorked) {
+                newExceptions[dateStr] = false; // Forced Off (-)
+            } else {
+                // Not worked (off day or weekend), we can only add
+                newExceptions[dateStr] = true; // Forced Worked (+)
+            }
+        } else {
+            // Already has an adjustment? Then Clicking ALWAYS returns to Neutral
+            delete newExceptions[dateStr];
+        }
+
+        updateYearSpecific(id, year, {
+            workDayExceptions: newExceptions
         });
     };
 
@@ -289,9 +436,12 @@ export function PartnerProvider({ children }) {
             updatePartner,
             updateAllocation,
             toggleWorkDay,
+            updateWorkPeriods,
             toggleVacation,
             toggleTraining,
             toggleAFVAC,
+            toggleSickLeave,
+            toggleWorkDayException,
             isSaving
         }}>
             {children}

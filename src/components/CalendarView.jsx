@@ -3,11 +3,12 @@ import { eachMonthOfInterval, endOfMonth, endOfYear, eachDayOfInterval, format, 
 import { fr } from 'date-fns/locale';
 import { usePartnerContext } from '../context/PartnerContext';
 import { isWorkedHoliday } from '../utils/holidays';
+import { getWorkDaysForDate } from '../utils/dateUtils';
 import { GraduationCap, Umbrella, BookOpen, Activity } from 'lucide-react';
 
 export default function CalendarView({ partner }) {
-    const { year, holidays, toggleVacation, toggleTraining, toggleAFVAC } = usePartnerContext();
-    const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac'
+    const { year, holidays, toggleVacation, toggleTraining, toggleAFVAC, toggleSickLeave, toggleWorkDayException } = usePartnerContext();
+    const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac' | 'sick' | 'adjustment'
 
     const yearStart = startOfYear(new Date(year, 0, 1));
     const yearEnd = endOfYear(yearStart);
@@ -34,21 +35,37 @@ export default function CalendarView({ partner }) {
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'given' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                     >
                         <GraduationCap className="w-4 h-4" />
-                        Formation Donnée
+                        Formation donnée
                     </button>
                     <button
                         onClick={() => setMode('received')}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'received' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                     >
                         <BookOpen className="w-4 h-4" />
-                        Formation Reçue
+                        Formation reçue
+                    </button>
+                    {partner.allocations.hasAFVAC && (
+                        <button
+                            onClick={() => setMode('afvac')}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'afvac' ? 'bg-white text-[#FBC619] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                        >
+                            <Activity className="w-4 h-4" />
+                            AFVAC
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setMode('sick')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'sick' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M2 12h20" /></svg>
+                        Maladie
                     </button>
                     <button
-                        onClick={() => setMode('afvac')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'afvac' ? 'bg-white text-[#FBC619] shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                        onClick={() => setMode('adjustment')}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === 'adjustment' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
                     >
-                        <Activity className="w-4 h-4" />
-                        AFVAC
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+                        Ajustements
                     </button>
                 </div>
             </div>
@@ -62,30 +79,11 @@ export default function CalendarView({ partner }) {
                         partner={partner}
                         holidays={holidays}
                         onToggle={(id, date) => {
-                            if (mode === 'vacation') {
-                                toggleVacation(id, date);
-                            } else if (mode === 'afvac') {
-                                toggleAFVAC(id, date);
-                            } else {
-                                // Check limit before adding
-                                const isGiven = mode === 'given';
-                                const list = (isGiven ? partner.trainingsGiven : partner.trainingsReceived) || [];
-                                const limit = (isGiven ? partner.allocations.trainingGive : partner.allocations.trainingReceive) || 0;
-
-                                // If unselecting (already in list), always allow
-                                if (list.includes(date)) {
-                                    toggleTraining(id, date, mode);
-                                    return;
-                                }
-
-                                // If adding, check limit
-                                if (list.length >= limit) {
-                                    alert(`Limite atteinte pour les formations ${isGiven ? 'données' : 'reçues'} (${limit} jours).`);
-                                    return;
-                                }
-
-                                toggleTraining(id, date, mode);
-                            }
+                            if (mode === 'vacation') toggleVacation(partner.id, date);
+                            else if (mode === 'given' || mode === 'received') toggleTraining(partner.id, date, mode);
+                            else if (mode === 'afvac') toggleAFVAC(partner.id, date);
+                            else if (mode === 'sick') toggleSickLeave(partner.id, date);
+                            else if (mode === 'adjustment') toggleWorkDayException(partner.id, date);
                         }}
                         mode={mode}
                     />
@@ -96,7 +94,12 @@ export default function CalendarView({ partner }) {
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-primary"></div> Congé</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500"></div> Formation Donnée</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500"></div> Formation Reçue</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-[#FBC619]"></div> AFVAC</div>
+                {partner.allocations.hasAFVAC && (
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-[#FBC619]"></div> AFVAC</div>
+                )}
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-900"></div> Maladie</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500 flex items-center justify-center text-[8px] text-white font-bold">+</div> Ajouté</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-red-500 flex items-center justify-center text-[8px] text-white font-bold">-</div> Retiré</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-100 border border-gray-200"></div> Travaillable</div>
             </div>
         </div>
@@ -141,44 +144,55 @@ function MonthGrid({ monthStart, partner, holidays, onToggle, mode }) {
                     const isWknd = isWeekend(day);
 
                     const isVacation = partner.vacations.includes(dateStr);
-                    const isGiven = partner.trainingsGiven && partner.trainingsGiven.includes(dateStr);
-                    const isReceived = partner.trainingsReceived && partner.trainingsReceived.includes(dateStr);
-                    const isAFVAC = partner.afvac && partner.afvac.includes(dateStr);
+                    const isGiven = (partner.trainingsGiven || []).includes(dateStr);
+                    const isReceived = (partner.trainingsReceived || []).includes(dateStr);
+                    const isAFVAC = (partner.afvac || []).includes(dateStr);
+                    const isSick = (partner.sickLeave || []).includes(dateStr);
+                    const exception = (partner.workDayExceptions || {})[dateStr];
 
                     const holidayName = holidays[dateStr];
                     const isPentecote = isWorkedHoliday(holidayName);
                     const isHoliday = !!holidayName;
 
-                    const isPartnerWorkDay = partner.workDays[dayOfWeek] !== false;
+                    const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};
+                    let isPartnerWorkDay = currentWorkDays[dayOfWeek] === true;
+
+                    if (exception !== undefined) {
+                        isPartnerWorkDay = exception === true;
+                    }
 
                     let stateClasses = "bg-white text-gray-700 hover:bg-gray-50 border border-gray-100 hover:border-gray-300 cursor-pointer";
 
                     // Default states
-                    if (isWknd) {
+                    if (isWknd && !isPartnerWorkDay) {
                         stateClasses = "text-gray-300 bg-gray-50 border-transparent cursor-default";
-                    } else if (isHoliday && !isPentecote) {
+                    } else if (isHoliday && !isPartnerWorkDay && !isPentecote) {
                         stateClasses = "bg-red-50 text-red-500 font-bold border-red-100 cursor-default";
                     } else if (!isPartnerWorkDay) {
                         stateClasses = "bg-gray-100/50 text-gray-300 border-transparent cursor-default";
                     }
 
                     // Active States (Override defaults if selected)
-                    if (isVacation) {
-                        stateClasses = "bg-primary text-white shadow-md shadow-primary/25 border-primary font-bold scale-110 z-10";
-                    } else if (isGiven) {
-                        stateClasses = "bg-purple-500 text-white shadow-md shadow-purple-500/25 border-purple-500 font-bold scale-110 z-10";
-                    } else if (isReceived) {
-                        stateClasses = "bg-orange-500 text-white shadow-md shadow-orange-500/25 border-orange-500 font-bold scale-110 z-10";
-                    } else if (isAFVAC) {
-                        stateClasses = "bg-[#FBC619] text-white shadow-md shadow-[#FBC619]/25 border-[#FBC619] font-bold scale-110 z-10";
-                    } else if (isPentecote) {
+                    if (isVacation) stateClasses = 'bg-primary text-white shadow-md shadow-primary/20 scale-105 z-10';
+                    else if (isGiven) stateClasses = 'bg-purple-500 text-white shadow-md shadow-purple-500/20 scale-105 z-10';
+                    else if (isReceived) stateClasses = 'bg-orange-500 text-white shadow-md shadow-orange-500/20 scale-105 z-10';
+                    else if (isAFVAC) stateClasses = 'bg-[#FBC619] text-white shadow-md shadow-yellow-500/20 scale-105 z-10';
+                    else if (isSick) stateClasses = 'bg-gray-900 text-white shadow-md shadow-gray-900/20 scale-105 z-10';
+                    else if (isPentecote) {
                         stateClasses += " ring-2 ring-secondary/20 text-secondary font-semibold";
                     }
 
                     // Interaction Logic
+                    const hasOtherAction = isVacation || isGiven || isReceived || isAFVAC || isSick;
                     let isDisabled = false;
                     if (mode === 'vacation') {
                         isDisabled = isWknd || (isHoliday && !isPentecote);
+                    } else if (mode === 'afvac') {
+                        isDisabled = !partner.allocations.hasAFVAC || isHoliday || isWknd;
+                    } else if (mode === 'sick') {
+                        isDisabled = isHoliday || isWknd;
+                    } else if (mode === 'adjustment') {
+                        isDisabled = hasOtherAction;
                     } else {
                         // Training modes
                         isDisabled = false;
@@ -192,13 +206,21 @@ function MonthGrid({ monthStart, partner, holidays, onToggle, mode }) {
                             className={`
                 h-9 w-9 rounded-lg flex items-center justify-center text-xs transition-all duration-200 relative group/day
                 ${stateClasses}
-                ${!isDisabled && mode === 'given' && !isGiven && !isVacation && !isReceived && !isAFVAC ? 'hover:border-purple-300 hover:text-purple-600' : ''}
-                ${!isDisabled && mode === 'received' && !isReceived && !isVacation && !isGiven && !isAFVAC ? 'hover:border-orange-300 hover:text-orange-600' : ''}
-                ${!isDisabled && mode === 'afvac' && !isAFVAC && !isVacation && !isGiven && !isReceived ? 'hover:border-[#FBC619] hover:text-[#FBC619]' : ''}
+                ${!isDisabled && mode === 'given' && !isGiven && !isVacation && !isReceived && !isAFVAC && !isSick ? 'hover:border-purple-300 hover:text-purple-600' : ''}
+                ${!isDisabled && mode === 'received' && !isReceived && !isVacation && !isGiven && !isAFVAC && !isSick ? 'hover:border-orange-300 hover:text-orange-600' : ''}
+                ${!isDisabled && mode === 'afvac' && partner.allocations.hasAFVAC && !isAFVAC && !isVacation && !isGiven && !isReceived && !isSick ? 'hover:border-[#FBC619] hover:text-[#FBC619]' : ''}
+                ${!isDisabled && mode === 'sick' && !isSick && !isVacation && !isGiven && !isReceived && !isAFVAC ? 'hover:border-gray-900 hover:text-gray-900' : ''}
               `}
                             title={holidayName || ''}
                         >
                             {format(day, 'd')}
+
+                            {exception === true && (
+                              <div className="absolute top-0 right-0 -mt-1 -mr-1 w-3 h-3 bg-blue-500 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">+</div>
+                            )}
+                            {exception === false && (
+                              <div className="absolute top-0 right-0 -mt-1 -mr-1 w-3 h-3 bg-red-500 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">-</div>
+                            )}
 
                             {isHoliday && (
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900/90 backdrop-blur text-white text-[10px] font-medium rounded opacity-0 group-hover/day:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity shadow-lg">

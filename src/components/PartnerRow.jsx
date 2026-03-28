@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
-import { calculateDeductedDays, calculateRecoveredDays } from '../utils/dateUtils';
+import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation } from '../utils/dateUtils';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
@@ -14,20 +14,10 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
     const usedVacationDays = useMemo(() => {
         if (!partner.vacations.length) return 0;
         return partner.vacations.reduce((acc, dateStr) => {
-            const deducted = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false);
+            const deducted = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
             return acc + deducted;
         }, 0);
-    }, [partner.vacations, partner.workDays, holidays]);
-
-    // Calculate recovered days from training (only on non-working days)
-    const recoveredDays = useMemo(() => {
-        const given = partner.trainingsGiven || [];
-        const received = partner.trainingsReceived || [];
-        const allTrainings = [...given, ...received];
-
-        if (!allTrainings.length) return 0;
-        return calculateRecoveredDays(allTrainings, partner.workDays, holidays);
-    }, [partner.trainingsGiven, partner.trainingsReceived, partner.workDays, holidays]);
+    }, [partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays]);
 
     // Calculate holiday days that fall on working days (when toggle is ON)
     const holidayDaysDeducted = useMemo(() => {
@@ -45,21 +35,49 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
             if (dayOfWeek === 0 || dayOfWeek === 6) return;
 
             // Skip if partner doesn't work this day
-            if (partner.workDays[dayOfWeek] === false) return;
+            // Check based on periods if available
+            const currentWorkDays = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions) > 0;
+            if (!currentWorkDays) return;
 
             count++;
         });
         return count;
-    }, [holidays, partner.workDays, settings.countHolidaysAsLeave]);
+    }, [holidays, partner.workDays, partner.workPeriods, partner.workDayExceptions, settings.countHolidaysAsLeave]);
+
+    // Calculate worked days in the year
+    // Formations reçues/données on non-work days count as extra worked days (not as vacation credit)
+    const workedDays = useMemo(() => {
+        return calculateWorkedDays(
+            year,
+            partner.workDays,
+            holidays,
+            partner.vacations,
+            partner.trainingsReceived || [],
+            partner.trainingsGiven || [],
+            partner.afvac || [],
+            partner.workPeriods,
+            partner.sickLeave || [],
+            partner.workDayExceptions || {}
+        );
+    }, [year, partner.workDays, partner.workPeriods, holidays, partner.vacations, partner.trainingsReceived, partner.trainingsGiven, partner.afvac, partner.sickLeave, partner.workDayExceptions]);
+
+    const normalTraining = useMemo(() => {
+        return calculateNormalTrainingAllocation(year, partner.workPeriods, partner.workDays);
+    }, [year, partner.workPeriods, partner.workDays]);
 
     const totalUsed = usedVacationDays + holidayDaysDeducted;
-    const remaining = partner.allocations.vacation - totalUsed + recoveredDays;
+    const remaining = partner.allocations.vacation - totalUsed;
     const isOverLimit = remaining < 0;
 
-    // Progress bar calculation (clamped between 0 and 100 for visual sanity, but logic handles overflow)
-    // Denom: Allocation + Recovered (Total available pot)
-    const totalAvailable = partner.allocations.vacation + recoveredDays;
+    // Progress bar
+    const totalAvailable = partner.allocations.vacation;
     const progressPercent = totalAvailable > 0 ? Math.min(100, (totalUsed / totalAvailable) * 100) : 100;
+
+    // Training stats
+    const usedTrainingReceived = (partner.trainingsReceived || []).length;
+    const usedTrainingGiven = (partner.trainingsGiven || []).length;
+    const allocatedTrainingReceived = partner.allocations.trainingReceive;
+    const allocatedTrainingGiven = partner.allocations.trainingGive;
 
     return (
         <div className={`
@@ -89,44 +107,76 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                         <h3 className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">
                             {partner.name.split(' ')[0]}
                         </h3>
-                        <div className="flex items-center gap-2 mt-1 text-sm text-gray-500 font-medium">
-                            <Briefcase className="w-3.5 h-3.5" />
-                            <span>{Object.values(partner.workDays).filter(Boolean).length}j / semaine</span>
-                        </div>
                     </div>
                 </div>
 
                 {/* Stats & Progress */}
                 <div className="flex items-center justify-between sm:justify-end gap-6 sm:gap-10 flex-1">
-                    <div className="hidden sm:block flex-1 max-w-[200px]">
-                        <div className="flex justify-between text-xs font-semibold mb-1.5">
-                            <span className="text-gray-400">Progression</span>
-                            <span className={isOverLimit ? 'text-red-500' : 'text-blue-600'}>
-                                {Math.round(progressPercent)}%
-                            </span>
-                        </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all duration-500 ${isOverLimit ? 'bg-red-500' : 'bg-blue-500'}`}
-                                style={{ width: `${progressPercent}%` }}
-                            />
-                        </div>
-                    </div>
-
                     <div className="flex items-center gap-6">
-                        <div className="text-right">
-                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">Solde Restant</p>
+                        {/* Jours Travaillés */}
+                        <div className="text-right border-r border-gray-100 pr-6">
+                            <div className="flex items-center justify-end gap-1.5 mb-0.5 group/tooltip relative">
+                                <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400">Jours Travaillés</p>
+                                <Info className="w-3.5 h-3.5 text-gray-300 cursor-help" />
+                                <div className="absolute bottom-full right-0 mb-2 w-56 p-2 bg-gray-900 text-white text-[10px] rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-all pointer-events-none z-20 font-medium normal-case shadow-xl">
+                                    Comprennent : planning de base + jours de formation (données/reçues) + ajustements (jours ajoutés). 
+                                    <br/><br/>
+                                    Déduits : congés, AFVAC, maladie et ajustements (jours retirés).
+                                </div>
+                            </div>
                             <div className="flex items-baseline justify-end gap-1">
+                                <span className="text-2xl font-bold tabular-nums tracking-tight text-emerald-600">
+                                    {workedDays}
+                                </span>
+                                <span className="text-sm font-medium text-gray-400">j</span>
+                            </div>
+                        </div>
+
+                        {/* Formation reçue */}
+                        <div className="text-right border-r border-gray-100 pr-6 hidden md:block">
+                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formation reçue</p>
+                            <div className="flex items-baseline justify-end gap-1">
+                                <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
+                                    {usedTrainingReceived}
+                                </span>
+                                <span className="text-xs font-medium text-gray-400">/ {allocatedTrainingReceived}j</span>
+                            </div>
+                            {allocatedTrainingReceived !== normalTraining && (
+                                <p className="text-[9px] text-amber-600 font-medium">(normal: {normalTraining}j)</p>
+                            )}
+                        </div>
+
+                        {/* Formation donnée */}
+                        <div className="text-right border-r border-gray-100 pr-6 hidden md:block">
+                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formation donnée</p>
+                            <div className="flex items-baseline justify-end gap-1">
+                                <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
+                                    {usedTrainingGiven}
+                                </span>
+                                <span className="text-xs font-medium text-gray-400">/ {allocatedTrainingGiven}j</span>
+                            </div>
+                            {allocatedTrainingGiven !== normalTraining && (
+                                <p className="text-[9px] text-amber-600 font-medium">(normal: {normalTraining}j)</p>
+                            )}
+                        </div>
+
+                        {/* Congés restants */}
+                        <div className="text-right min-w-[140px]">
+                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">Congés restants</p>
+                            <div className="flex items-baseline justify-end gap-1 mb-2">
                                 <span className={`text-2xl font-bold tabular-nums tracking-tight ${isOverLimit ? 'text-red-500' : 'text-gray-900'}`}>
                                     {remaining}
                                 </span>
                                 <span className="text-sm font-medium text-gray-400">/ {totalAvailable}</span>
                             </div>
-                            {recoveredDays > 0 && (
-                                <p className="text-[10px] text-green-600 font-medium mt-0.5">
-                                    +{recoveredDays} récupérés
-                                </p>
-                            )}
+                            
+                            {/* Progress bar moved here */}
+                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-full">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-500 ${isOverLimit ? 'bg-red-500' : 'bg-blue-500'}`}
+                                    style={{ width: `${progressPercent}%` }}
+                                />
+                            </div>
                         </div>
 
                         <button
