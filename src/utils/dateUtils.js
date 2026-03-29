@@ -147,6 +147,53 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
 }
 
 /**
+ * Calculate the expected total number of worked days in a year for a specific partner.
+ * This is based purely on their configured schedule and public holidays,
+ * before taking any vacations, sick leave, or extra training days into account.
+ *
+ * @param {number} year
+ * @param {Object} partnerWorkDays
+ * @param {Object} holidays
+ * @param {Array} workPeriods
+ * @returns {number}
+ */
+export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, workPeriods = [], workDayExceptions = {}) {
+    const yearStart = startOfYear(new Date(year, 0, 1));
+    const yearEnd = endOfYear(yearStart);
+    const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
+
+    let count = 0;
+
+    days.forEach(day => {
+        if (isWeekend(day)) return;
+
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const dayOfWeek = day.getDay();
+        const exception = workDayExceptions[dateStr];
+
+        const holidayName = holidays[dateStr];
+        if (holidayName && exception !== true) {
+            const isPentecote = holidayName.toLowerCase().includes('pentecôte');
+            if (!isPentecote) return;
+        }
+
+        let isNormallyWorked = false;
+        if (exception !== undefined) {
+            isNormallyWorked = exception === true;
+        } else {
+            const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
+            isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+        }
+
+        if (isNormallyWorked) {
+            count++;
+        }
+    });
+
+    return count;
+}
+
+/**
  * Find the work days schedule for a specific date given a list of periods.
  */
 export function getWorkDaysForDate(date, workPeriods = []) {

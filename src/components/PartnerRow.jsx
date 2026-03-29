@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
-import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation } from '../utils/dateUtils';
+import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays } from '../utils/dateUtils';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
@@ -61,6 +61,23 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
         );
     }, [year, partner.workDays, partner.workPeriods, holidays, partner.vacations, partner.trainingsReceived, partner.trainingsGiven, partner.afvac, partner.sickLeave, partner.workDayExceptions]);
 
+    const expectedWorkedDays = useMemo(() => {
+        const baseExpected = calculateExpectedWorkedDays(
+            year,
+            partner.workDays,
+            holidays,
+            partner.workPeriods,
+            partner.workDayExceptions || {}
+        );
+        return baseExpected - (partner.allocations?.vacation || 0);
+    }, [year, partner.workDays, holidays, partner.workPeriods, partner.workDayExceptions, partner.allocations?.vacation]);
+
+    const workedDaysColor = useMemo(() => {
+        if (workedDays === expectedWorkedDays) return 'text-emerald-600';
+        if (workedDays > expectedWorkedDays) return 'text-indigo-600'; // Plus de jours travaillés que prévu
+        return 'text-amber-500'; // Moins de jours travaillés que prévu
+    }, [workedDays, expectedWorkedDays]);
+
     const normalTraining = useMemo(() => {
         return calculateNormalTrainingAllocation(year, partner.workPeriods, partner.workDays);
     }, [year, partner.workPeriods, partner.workDays]);
@@ -119,22 +136,26 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                                 <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400">Jours Travaillés</p>
                                 <Info className="w-3.5 h-3.5 text-gray-300 cursor-help" />
                                 <div className="absolute bottom-full right-0 mb-2 w-56 p-2 bg-gray-900 text-white text-[10px] rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-all pointer-events-none z-20 font-medium normal-case shadow-xl">
-                                    Comprennent : planning de base + jours de formation (données/reçues) + ajustements (jours ajoutés). 
+                                    <span className="text-gray-300 font-bold block mb-1 border-b border-gray-700 pb-1">Total calculé :</span>
+                                    Comprennent : planning de base + jours de formations (données/reçues) + ajustements (jours ajoutés). 
                                     <br/><br/>
                                     Déduits : congés, AFVAC, maladie et ajustements (jours retirés).
+                                    <br/><br/>
+                                    <span className="text-gray-300 font-bold block mt-2 mb-1 border-b border-gray-700 pb-1">Attendu à la fin de l'année :</span>
+                                    Le nombre de jours de travail prévus sur l'année (selon le planning et les jours fériés), auquel on retire le quota de congés payés de l'associé ({partner.allocations?.vacation || 0}j). Ne prend en compte aucune autre absence (AFVAC, maladie).
                                 </div>
                             </div>
                             <div className="flex items-baseline justify-end gap-1">
-                                <span className="text-2xl font-bold tabular-nums tracking-tight text-emerald-600">
+                                <span className={`text-2xl font-bold tabular-nums tracking-tight ${workedDaysColor}`}>
                                     {workedDays}
                                 </span>
-                                <span className="text-sm font-medium text-gray-400">j</span>
+                                <span className="text-sm font-medium text-gray-400">/ {expectedWorkedDays}j</span>
                             </div>
                         </div>
 
-                        {/* Formation reçue */}
+                        {/* Formations reçues */}
                         <div className="text-right border-r border-gray-100 pr-6 hidden md:block">
-                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formation reçue</p>
+                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formations reçues</p>
                             <div className="flex items-baseline justify-end gap-1">
                                 <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
                                     {usedTrainingReceived}
@@ -146,9 +167,9 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                             )}
                         </div>
 
-                        {/* Formation donnée */}
+                        {/* Formations données */}
                         <div className="text-right border-r border-gray-100 pr-6 hidden md:block">
-                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formation donnée</p>
+                            <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formations données</p>
                             <div className="flex items-baseline justify-end gap-1">
                                 <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
                                     {usedTrainingGiven}
