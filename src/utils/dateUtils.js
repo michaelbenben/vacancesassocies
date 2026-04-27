@@ -1,5 +1,5 @@
 import { isWeekend, parseISO, eachDayOfInterval, startOfYear, endOfYear, format } from 'date-fns';
-import { isWorkedHoliday } from './holidays';
+import { isWorkedHoliday } from './holidays.js';
 
 /**
  * Calculate the number of working days taken between two dates for a specific partner.
@@ -99,11 +99,17 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
     let count = 0;
 
     days.forEach(day => {
-        // Never count weekends
-        if (isWeekend(day)) return;
-
         const dateStr = format(day, 'yyyy-MM-dd');
         const dayOfWeek = day.getDay();
+
+        // Formations (reçues ou données) on ANY day = extra worked day
+        if (extraWorkedDays.has(dateStr)) {
+            count++;
+            return;
+        }
+
+        // Never count weekends (unless it was a training, handled above)
+        if (isWeekend(day)) return;
 
         const exception = workDayExceptions[dateStr];
 
@@ -113,12 +119,6 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
         if (holidayName && exception !== true) {
             const isPentecote = holidayName.toLowerCase().includes('pentecôte');
             if (!isPentecote) return;
-        }
-
-        // Formations (reçues ou données) on non-scheduled days = extra worked day
-        if (extraWorkedDays.has(dateStr)) {
-            count++;
-            return;
         }
 
         // Check for manual exceptions

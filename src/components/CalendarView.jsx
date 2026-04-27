@@ -199,21 +199,24 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
         const sickLeaveSet = new Set(partner.sickLeave || []);
 
         days.forEach(day => {
-            if (isWeekend(day)) return;
-
             const dateStr = format(day, 'yyyy-MM-dd');
             const dayOfWeek = day.getDay();
+
+            // Formations (reçues ou données) on ANY day = extra worked day
+            if (extraWorkedDays.has(dateStr)) {
+                count++;
+                return;
+            }
+
+            // Never count weekends (unless it was a training, handled above)
+            if (isWeekend(day)) return;
+
             const exception = (partner.workDayExceptions || {})[dateStr];
 
             const holidayName = holidays[dateStr];
             if (holidayName && exception !== true) {
                 const isPentecote = holidayName.toLowerCase().includes('pentecôte');
                 if (!isPentecote) return;
-            }
-
-            if (extraWorkedDays.has(dateStr)) {
-                count++;
-                return;
             }
 
             let isNormallyWorked = false;
