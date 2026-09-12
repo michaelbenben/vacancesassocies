@@ -4,11 +4,13 @@ import { fr } from 'date-fns/locale';
 import { usePartnerContext } from '../context/PartnerContext';
 import { isWorkedHoliday } from '../utils/holidays';
 import { getWorkDaysForDate, calculateDeductedDays } from '../utils/dateUtils';
+import { getDayValue, getDayPart, formatDays, stripPart } from '../utils/halfDays';
 import { GraduationCap, Umbrella, BookOpen, Activity } from 'lucide-react';
 
 export default function CalendarView({ partner }) {
     const { year, holidays, settings } = usePartnerContext();
     const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac' | 'sick' | 'adjustment'
+    const [quantity, setQuantity] = useState('FULL'); // 'FULL' | 'AM' | 'PM'
 
     const { applyBatchDates } = usePartnerContext();
 
@@ -16,7 +18,8 @@ export default function CalendarView({ partner }) {
         isDragging: false,
         start: null,
         current: null,
-        action: null
+        action: null,
+        quantity: 'FULL'
     });
 
     useEffect(() => {
@@ -34,23 +37,25 @@ export default function CalendarView({ partner }) {
                     const days = eachDayOfInterval({ start, end });
                     const dateStrings = days.map(d => format(d, 'yyyy-MM-dd'));
                     
-                    applyBatchDates(partner.id, dateStrings, mode, dragState.action);
+                    applyBatchDates(partner.id, dateStrings, mode, dragState.action, dragState.quantity || quantity);
                 }
-                setDragState({ isDragging: false, start: null, current: null, action: null });
+                setDragState({ isDragging: false, start: null, current: null, action: null, quantity: quantity });
             }
         };
 
         window.addEventListener('mouseup', handleMouseUp);
         return () => window.removeEventListener('mouseup', handleMouseUp);
-    }, [dragState, applyBatchDates, partner.id, mode]);
+    }, [dragState, applyBatchDates, partner.id, mode, quantity]);
 
     const handleDragStart = (e, dateStr, isCurrentlyActioned) => {
         e.preventDefault();
+        const q = mode === 'adjustment' ? 'FULL' : quantity;
         setDragState({
             isDragging: true,
             start: dateStr,
             current: dateStr,
-            action: isCurrentlyActioned ? 'remove' : 'add'
+            action: isCurrentlyActioned ? 'remove' : 'add',
+            quantity: q
         });
     };
 
@@ -119,10 +124,34 @@ export default function CalendarView({ partner }) {
                     </button>
                 </div>
 
+                {/* Quantity Switcher — demi-journées */}
+                {mode !== 'adjustment' && (
+                    <div className="inline-flex bg-white border border-gray-200 p-1 rounded-xl gap-1 shadow-sm">
+                        <button
+                            onClick={() => setQuantity('FULL')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'FULL' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                        >
+                            Journée entière
+                        </button>
+                        <button
+                            onClick={() => setQuantity('AM')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'AM' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                        >
+                            Matin ½
+                        </button>
+                        <button
+                            onClick={() => setQuantity('PM')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'PM' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                        >
+                            Après-midi ½
+                        </button>
+                    </div>
+                )}
+
                 {/* Mode Explanation Text */}
                 <div className="max-w-xl text-center animate-in fade-in slide-in-from-top-1 duration-300">
                     <p className="text-[11px] font-medium text-gray-500 leading-relaxed italic">
-                        {mode === 'vacation' && "Décompté du solde annuel. Un jour de congé posé sur un jour travaillé réduit le solde de 1."}
+                        {mode === 'vacation' && (quantity === 'FULL' ? "Décompté du solde annuel. Un jour de congé posé sur un jour travaillé réduit le solde de 1." : "Demi-journée décomptée 0,5 du solde. Re-cliquez sur la même demi pour l'annuler.")}
                         {mode === 'given' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
                         {mode === 'received' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
                         {mode === 'afvac' && "Absence pour congrès. Décomptée des jours travaillés mais n'impacte pas le solde de congés."}
@@ -141,6 +170,7 @@ export default function CalendarView({ partner }) {
                         partner={partner}
                         holidays={holidays}
                         mode={mode}
+                        quantity={mode === 'adjustment' ? 'FULL' : quantity}
                         dragState={dragState}
                         onDragStart={handleDragStart}
                         onDragEnter={handleDragEnter}
@@ -157,6 +187,7 @@ export default function CalendarView({ partner }) {
                     <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-[#FBC619]"></div> AFVAC</div>
                 )}
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-900"></div> Maladie</div>
+                <div className="flex items-center gap-2"><div className="w-4 h-3 rounded border border-gray-300" style={{ background: 'linear-gradient(to right, #C51F84 50%, #fff 50%)' }}></div> Demi-journée</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500 flex items-center justify-center text-[8px] text-white font-bold">+</div> Ajouté</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-red-500 flex items-center justify-center text-[8px] text-white font-bold">-</div> Retiré</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-100 border border-gray-200"></div> Travaillable</div>
@@ -178,7 +209,15 @@ const isDateInRange = (dateStr, startStr, endStr) => {
     return !isBefore(date, start) && !isAfter(date, end);
 };
 
-function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart, onDragEnter, settings }) {
+const HALF_COLORS = {
+    vacation: '#C51F84',
+    given: '#a855f7',
+    received: '#f97316',
+    afvac: '#FBC619',
+    sick: '#111827',
+};
+
+function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dragState, onDragStart, onDragEnter, settings }) {
     const monthTime = monthStart.getTime();
     const days = useMemo(() => {
         const end = endOfMonth(monthStart);
@@ -193,58 +232,67 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
 
     const workedDaysThisMonth = useMemo(() => {
         let count = 0;
-        const extraWorkedDays = new Set([...(partner.trainingsReceived || []), ...(partner.trainingsGiven || [])]);
-        const vacationSet = new Set(partner.vacations || []);
-        const afvacSet = new Set(partner.afvac || []);
-        const sickLeaveSet = new Set(partner.sickLeave || []);
 
         days.forEach(day => {
             const dateStr = format(day, 'yyyy-MM-dd');
-            const dayOfWeek = day.getDay();
 
-            // Formations (reçues ou données) on ANY day = extra worked day
-            if (extraWorkedDays.has(dateStr)) {
-                count++;
-                return;
-            }
-
-            // Never count weekends (unless it was a training, handled above)
-            if (isWeekend(day)) return;
+            const trainingVal = Math.max(
+                getDayValue(partner.trainingsReceived || [], dateStr),
+                getDayValue(partner.trainingsGiven || [], dateStr)
+            );
+            if (trainingVal >= 1) { count += 1; return; }
 
             const exception = (partner.workDayExceptions || {})[dateStr];
-
             const holidayName = holidays[dateStr];
+            let base = 0;
+            const isWknd = isWeekend(day);
+            let isOffHoliday = false;
             if (holidayName && exception !== true) {
                 const isPentecote = holidayName.toLowerCase().includes('pentecôte');
-                if (!isPentecote) return;
+                if (!isPentecote) isOffHoliday = true;
+            }
+            if (!isWknd && !isOffHoliday) {
+                if (exception !== undefined) {
+                    base = exception === true ? 1 : 0;
+                } else {
+                    const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};
+                    base = currentWorkDays[day.getDay()] === true ? 1 : 0;
+                }
+            } else if (exception === true) {
+                base = 1;
             }
 
-            let isNormallyWorked = false;
-            if (exception !== undefined) {
-                isNormallyWorked = exception === true;
-            } else {
-                const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};
-                isNormallyWorked = currentWorkDays[dayOfWeek] === true;
-            }
+            if (trainingVal > 0) { count += base >= 1 ? 1 : 0.5; return; }
+            if (base === 0) return;
 
-            if (!isNormallyWorked) return;
+            const absent = Math.max(
+                getDayValue(partner.vacations || [], dateStr),
+                getDayValue(partner.afvac || [], dateStr),
+                getDayValue(partner.sickLeave || [], dateStr)
+            );
+            if (absent > 0) { count += Math.max(0, base - absent); return; }
 
-            if (vacationSet.has(dateStr)) return;
-            if (afvacSet.has(dateStr) || sickLeaveSet.has(dateStr)) return;
-
-            count++;
+            count += base;
         });
 
-        return count;
+        return Math.round(count * 2) / 2;
     }, [days, partner, holidays]);
 
     const vacationDaysThisMonth = useMemo(() => {
         let count = 0;
-        days.forEach(day => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            if ((partner.vacations || []).includes(dateStr)) {
-                count += calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
-            } else if (settings?.countHolidaysAsLeave) {
+        // Somme directe des clés (FULL=1, AM/PM=0.5 via calculateDeductedDays)
+        const monthPrefix = format(monthStart, 'yyyy-MM');
+        (partner.vacations || []).forEach(key => {
+            const base = stripPart(key);
+            if (base.startsWith(monthPrefix)) {
+                count += calculateDeductedDays(key, key, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
+            }
+        });
+        // Jours fériés comptés comme congés (option globale)
+        if (settings?.countHolidaysAsLeave) {
+            days.forEach(day => {
+                const dateStr = format(day, 'yyyy-MM-dd');
+                if (getDayValue(partner.vacations || [], dateStr) > 0) return; // déjà compté
                 const holidayName = holidays[dateStr];
                 if (holidayName && !holidayName.toLowerCase().includes('pentecôte')) {
                     const dayOfWeek = day.getDay();
@@ -254,10 +302,10 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                         }
                     }
                 }
-            }
-        });
-        return count;
-    }, [days, partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays, settings?.countHolidaysAsLeave]);
+            });
+        }
+        return Math.round(count * 2) / 2;
+    }, [days, monthStart, partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays, settings?.countHolidaysAsLeave]);
 
     return (
         <div>
@@ -268,11 +316,11 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                 <div className="h-px flex-1 bg-gray-100" />
                 <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-semibold">
                     <div className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100/50" title="Jours travaillés (incl. formations)">
-                        {workedDaysThisMonth}j trav.
+                        {formatDays(workedDaysThisMonth)}j trav.
                     </div>
                     {vacationDaysThisMonth > 0 && (
                         <div className="px-1.5 py-0.5 rounded bg-blue-50 text-primary border border-blue-100/50" title="Jours de congés posés">
-                            {vacationDaysThisMonth}j vac.
+                            {formatDays(vacationDaysThisMonth)}j vac.
                         </div>
                     )}
                 </div>
@@ -296,11 +344,17 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                     const dayOfWeek = getDay(day);
                     const isWknd = isWeekend(day);
 
-                    const isVacation = partner.vacations.includes(dateStr);
-                    const isGiven = (partner.trainingsGiven || []).includes(dateStr);
-                    const isReceived = (partner.trainingsReceived || []).includes(dateStr);
-                    const isAFVAC = (partner.afvac || []).includes(dateStr);
-                    const isSick = (partner.sickLeave || []).includes(dateStr);
+                    const vacationVal = getDayValue(partner.vacations || [], dateStr);
+                    const givenVal = getDayValue(partner.trainingsGiven || [], dateStr);
+                    const receivedVal = getDayValue(partner.trainingsReceived || [], dateStr);
+                    const afvacVal = getDayValue(partner.afvac || [], dateStr);
+                    const sickVal = getDayValue(partner.sickLeave || [], dateStr);
+
+                    const isVacation = vacationVal > 0;
+                    const isGiven = givenVal > 0;
+                    const isReceived = receivedVal > 0;
+                    const isAFVAC = afvacVal > 0;
+                    const isSick = sickVal > 0;
                     const exception = (partner.workDayExceptions || {})[dateStr];
 
                     const holidayName = holidays[dateStr];
@@ -320,6 +374,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                     }
 
                     let stateClasses = "bg-white text-gray-700 hover:bg-gray-50 border border-gray-100 hover:border-gray-300 cursor-pointer";
+                    let halfStyle = null;
 
                     // Default states
                     if (isWknd && !isPartnerWorkDay) {
@@ -330,12 +385,34 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                         stateClasses = "bg-gray-100/50 text-gray-300 border-transparent cursor-default";
                     }
 
-                    // Active States (Override defaults if selected)
-                    if (isVacation) stateClasses = 'bg-primary text-white shadow-md shadow-primary/20 scale-105 z-10';
-                    else if (isGiven) stateClasses = 'bg-purple-500 text-white shadow-md shadow-purple-500/20 scale-105 z-10';
-                    else if (isReceived) stateClasses = 'bg-orange-500 text-white shadow-md shadow-orange-500/20 scale-105 z-10';
-                    else if (isAFVAC) stateClasses = 'bg-[#FBC619] text-white shadow-md shadow-yellow-500/20 scale-105 z-10';
-                    else if (isSick) stateClasses = 'bg-gray-900 text-white shadow-md shadow-gray-900/20 scale-105 z-10';
+                    // Active States (Override defaults if selected) — FULL vs HALF
+                    const getActivePart = () => {
+                        if (isVacation) return getDayPart(partner.vacations || [], dateStr);
+                        if (isGiven) return getDayPart(partner.trainingsGiven || [], dateStr);
+                        if (isReceived) return getDayPart(partner.trainingsReceived || [], dateStr);
+                        if (isAFVAC) return getDayPart(partner.afvac || [], dateStr);
+                        if (isSick) return getDayPart(partner.sickLeave || [], dateStr);
+                        return null;
+                    };
+                    const activePart = getActivePart();
+                    const isHalf = activePart === 'AM' || activePart === 'PM';
+                    const activeType = isVacation ? 'vacation' : isGiven ? 'given' : isReceived ? 'received' : isAFVAC ? 'afvac' : isSick ? 'sick' : null;
+
+                    if (isVacation || isGiven || isReceived || isAFVAC || isSick) {
+                        if (isHalf && activeType) {
+                            const color = HALF_COLORS[activeType];
+                            halfStyle = activePart === 'AM'
+                                ? { background: `linear-gradient(to right, ${color} 50%, #ffffff 50%)` }
+                                : { background: `linear-gradient(to right, #ffffff 50%, ${color} 50%)` };
+                            stateClasses = 'text-gray-900 border border-gray-300 shadow-sm scale-105 z-10 font-bold';
+                        } else {
+                            if (isVacation) stateClasses = 'bg-primary text-white shadow-md shadow-primary/20 scale-105 z-10';
+                            else if (isGiven) stateClasses = 'bg-purple-500 text-white shadow-md shadow-purple-500/20 scale-105 z-10';
+                            else if (isReceived) stateClasses = 'bg-orange-500 text-white shadow-md shadow-orange-500/20 scale-105 z-10';
+                            else if (isAFVAC) stateClasses = 'bg-[#FBC619] text-white shadow-md shadow-yellow-500/20 scale-105 z-10';
+                            else if (isSick) stateClasses = 'bg-gray-900 text-white shadow-md shadow-gray-900/20 scale-105 z-10';
+                        }
+                    }
                     else if (isPentecote) {
                         stateClasses += " ring-2 ring-secondary/20 text-secondary font-semibold";
                     }
@@ -360,30 +437,51 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
                     const dragClasses = inDragRange ? `ring-2 ring-offset-1 ${dragState.action === 'add' ? 'ring-primary' : 'ring-red-400 opacity-50'}` : '';
 
                     // Tooltip text
+                    const partLabel = isHalf ? (activePart === 'AM' ? ' — Matin' : ' — Après-midi') : '';
                     let dayTitle = holidayName || "";
-                    if (isVacation) dayTitle = "Congés";
-                    else if (isGiven) dayTitle = "Formations données";
-                    else if (isReceived) dayTitle = "Formations reçues";
-                    else if (isAFVAC) dayTitle = "AFVAC";
-                    else if (isSick) dayTitle = "Maladie";
+                    if (isVacation) dayTitle = "Congés" + partLabel;
+                    else if (isGiven) dayTitle = "Formations données" + partLabel;
+                    else if (isReceived) dayTitle = "Formations reçues" + partLabel;
+                    else if (isAFVAC) dayTitle = "AFVAC" + partLabel;
+                    else if (isSick) dayTitle = "Maladie" + partLabel;
                     else if (isPentecote) dayTitle = holidayName + " (Travaillé)";
                     else if (exception === true) dayTitle = "Ajustement (Jour travaillé)";
                     else if (exception === false) dayTitle = "Ajustement (Jour de repos)";
+
+                    const isActionedForMode = () => {
+                        const q = quantity;
+                        if (mode === 'vacation') {
+                            if (q === 'FULL') return vacationVal >= 1;
+                            return getDayPart(partner.vacations || [], dateStr) === q;
+                        }
+                        if (mode === 'given') {
+                            if (q === 'FULL') return givenVal >= 1;
+                            return getDayPart(partner.trainingsGiven || [], dateStr) === q;
+                        }
+                        if (mode === 'received') {
+                            if (q === 'FULL') return receivedVal >= 1;
+                            return getDayPart(partner.trainingsReceived || [], dateStr) === q;
+                        }
+                        if (mode === 'afvac') {
+                            if (q === 'FULL') return afvacVal >= 1;
+                            return getDayPart(partner.afvac || [], dateStr) === q;
+                        }
+                        if (mode === 'sick') {
+                            if (q === 'FULL') return sickVal >= 1;
+                            return getDayPart(partner.sickLeave || [], dateStr) === q;
+                        }
+                        if (mode === 'adjustment') return exception !== undefined;
+                        return false;
+                    };
 
                     return (
                         <button
                             key={dateStr}
                             disabled={isDisabled}
+                            style={halfStyle || undefined}
                             onMouseDown={(e) => {
                                 if (isDisabled) return;
-                                let isActioned = false;
-                                if (mode === 'vacation') isActioned = isVacation;
-                                else if (mode === 'given') isActioned = isGiven;
-                                else if (mode === 'received') isActioned = isReceived;
-                                else if (mode === 'afvac') isActioned = isAFVAC;
-                                else if (mode === 'sick') isActioned = isSick;
-                                else if (mode === 'adjustment') isActioned = exception !== undefined;
-                                onDragStart(e, dateStr, isActioned);
+                                onDragStart(e, dateStr, isActionedForMode());
                             }}
                             onMouseEnter={() => {
                                 if (!isDisabled) onDragEnter(dateStr);
@@ -399,6 +497,10 @@ function MonthGrid({ monthStart, partner, holidays, mode, dragState, onDragStart
               `}
                         >
                             {format(day, 'd')}
+
+                            {isHalf && (
+                              <span className="absolute bottom-0.5 right-1 text-[7px] font-black leading-none bg-white/90 rounded px-0.5 border border-gray-200">½</span>
+                            )}
 
                             {exception === true && (
                               <div className="absolute top-0 right-0 -mt-1 -mr-1 w-3 h-3 bg-blue-500 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">+</div>

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getFrenchHolidays } from '../utils/holidays';
 import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation, getWorkDaysForDate } from '../utils/dateUtils';
+import { getDayValue, removeDate, addDate, stripPart } from '../utils/halfDays';
 import { getVacationData, saveVacationData, subscribeToVacationData } from '../firebase';
 
 const PartnerContext = createContext();
@@ -239,126 +240,171 @@ export function PartnerProvider({ children }) {
         });
     };
 
-    const toggleVacation = (id, dateStr) => {
+    const clearDateFromAll = (current, base, except = null) => {
+        const out = {};
+        out.vacations = except === 'vacations' ? [...current.vacations] : removeDate(current.vacations, base);
+        out.trainingsGiven = except === 'given' ? [...current.trainingsGiven] : removeDate(current.trainingsGiven, base);
+        out.trainingsReceived = except === 'received' ? [...current.trainingsReceived] : removeDate(current.trainingsReceived, base);
+        out.afvac = except === 'afvac' ? [...(current.afvac || [])] : removeDate(current.afvac || [], base);
+        out.sickLeave = except === 'sick' ? [...(current.sickLeave || [])] : removeDate(current.sickLeave || [], base);
+        return out;
+    };
+
+    const hasAnyStatus = (current, base) => {
+        return getDayValue(current.vacations, base) > 0 ||
+            getDayValue(current.trainingsGiven, base) > 0 ||
+            getDayValue(current.trainingsReceived, base) > 0 ||
+            getDayValue(current.afvac || [], base) > 0 ||
+            getDayValue(current.sickLeave || [], base) > 0;
+    };
+
+    const toggleVacation = (id, dateStr, quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
+
+        let newExceptions = { ...(current.workDayExceptions || {}) };
 
         let newVacations = [...current.vacations];
-        let newGiven = [...current.trainingsGiven];
-        let newReceived = [...current.trainingsReceived];
-        let newExceptions = { ...(current.workDayExceptions || {}) };
-
-        if (newVacations.includes(dateStr)) {
-            newVacations = newVacations.filter(d => d !== dateStr);
+        if (getDayValue(newVacations, base) > 0) {
+            // toggle simple legacy : si déjà posé (FULL ou même ½), on retire
+            newVacations = removeDate(newVacations, base);
         } else {
-            newVacations.push(dateStr);
-            newGiven = newGiven.filter(d => d !== dateStr);
-            newReceived = newReceived.filter(d => d !== dateStr);
-            delete newExceptions[dateStr];
+            const cleared = clearDateFromAll(current, base, 'vacations');
+            newVacations = addDate(cleared.vacations, base, quantity);
+            updateYearSpecific(id, year, {
+                vacations: newVacations,
+                trainingsGiven: cleared.trainingsGiven,
+                trainingsReceived: cleared.trainingsReceived,
+                afvac: cleared.afvac,
+                sickLeave: cleared.sickLeave,
+                workDayExceptions: (() => { delete newExceptions[base]; return newExceptions; })()
+            });
+            return;
         }
 
         updateYearSpecific(id, year, {
             vacations: newVacations,
-            trainingsGiven: newGiven,
-            trainingsReceived: newReceived,
-            afvac: (current.afvac || []).filter(d => d !== dateStr),
-            sickLeave: (current.sickLeave || []).filter(d => d !== dateStr),
+            trainingsGiven: [...current.trainingsGiven],
+            trainingsReceived: [...current.trainingsReceived],
+            afvac: [...(current.afvac || [])],
+            sickLeave: [...(current.sickLeave || [])],
             workDayExceptions: newExceptions
         });
     };
 
-    const toggleTraining = (id, dateStr, type = 'given') => {
+    const toggleTraining = (id, dateStr, type = 'given', quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
 
-        let newVacations = current.vacations.filter(d => d !== dateStr);
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+        delete newExceptions[base];
+
+        const clearedVac = removeDate(current.vacations, base);
+        const clearedAfvac = removeDate(current.afvac || [], base);
+        const clearedSick = removeDate(current.sickLeave || [], base);
+
         let newGiven = [...current.trainingsGiven];
         let newReceived = [...current.trainingsReceived];
-        let newExceptions = { ...(current.workDayExceptions || {}) };
 
         if (type === 'given') {
-            if (newGiven.includes(dateStr)) {
-                newGiven = newGiven.filter(d => d !== dateStr);
+            if (getDayValue(newGiven, base) > 0) {
+                newGiven = removeDate(newGiven, base);
             } else {
-                newGiven.push(dateStr);
-                newReceived = newReceived.filter(d => d !== dateStr);
-                delete newExceptions[dateStr];
+                const cleared = clearDateFromAll(current, base, 'given');
+                newGiven = addDate(cleared.trainingsGiven, base, quantity);
+                newReceived = cleared.trainingsReceived;
             }
         } else {
-            if (newReceived.includes(dateStr)) {
-                newReceived = newReceived.filter(d => d !== dateStr);
+            if (getDayValue(newReceived, base) > 0) {
+                newReceived = removeDate(newReceived, base);
             } else {
-                newReceived.push(dateStr);
-                newGiven = newGiven.filter(d => d !== dateStr);
-                delete newExceptions[dateStr];
+                const cleared = clearDateFromAll(current, base, 'received');
+                newReceived = addDate(cleared.trainingsReceived, base, quantity);
+                newGiven = cleared.trainingsGiven;
             }
         }
 
         updateYearSpecific(id, year, {
-            vacations: newVacations,
+            vacations: clearedVac,
             trainingsGiven: newGiven,
             trainingsReceived: newReceived,
-            afvac: (current.afvac || []).filter(d => d !== dateStr),
-            sickLeave: (current.sickLeave || []).filter(d => d !== dateStr),
+            afvac: clearedAfvac,
+            sickLeave: clearedSick,
             workDayExceptions: newExceptions
         });
     };
 
-    const toggleAFVAC = (id, dateStr) => {
+    const toggleAFVAC = (id, dateStr, quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
+
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+        delete newExceptions[base];
 
         let newAFVAC = [...(current.afvac || [])];
-        let newVacations = current.vacations.filter(d => d !== dateStr);
-        let newGiven = current.trainingsGiven.filter(d => d !== dateStr);
-        let newReceived = current.trainingsReceived.filter(d => d !== dateStr);
-        let newSick = (current.sickLeave || []).filter(d => d !== dateStr);
-        let newExceptions = { ...(current.workDayExceptions || {}) };
-
-        if (newAFVAC.includes(dateStr)) {
-            newAFVAC = newAFVAC.filter(d => d !== dateStr);
+        if (getDayValue(newAFVAC, base) > 0) {
+            newAFVAC = removeDate(newAFVAC, base);
         } else {
-            newAFVAC.push(dateStr);
-            delete newExceptions[dateStr];
+            const cleared = clearDateFromAll(current, base, 'afvac');
+            newAFVAC = addDate(cleared.afvac, base, quantity);
+            updateYearSpecific(id, year, {
+                vacations: cleared.vacations,
+                trainingsGiven: cleared.trainingsGiven,
+                trainingsReceived: cleared.trainingsReceived,
+                afvac: newAFVAC,
+                sickLeave: cleared.sickLeave,
+                workDayExceptions: newExceptions
+            });
+            return;
         }
 
         updateYearSpecific(id, year, {
-            vacations: newVacations,
-            trainingsGiven: newGiven,
-            trainingsReceived: newReceived,
+            vacations: removeDate(current.vacations, base),
+            trainingsGiven: removeDate(current.trainingsGiven, base),
+            trainingsReceived: removeDate(current.trainingsReceived, base),
             afvac: newAFVAC,
-            sickLeave: newSick,
+            sickLeave: removeDate(current.sickLeave || [], base),
             workDayExceptions: newExceptions
         });
     };
 
-    const toggleSickLeave = (id, dateStr) => {
+    const toggleSickLeave = (id, dateStr, quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
+
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+        delete newExceptions[base];
 
         let newSick = [...(current.sickLeave || [])];
-        let newVacations = current.vacations.filter(d => d !== dateStr);
-        let newGiven = current.trainingsGiven.filter(d => d !== dateStr);
-        let newReceived = current.trainingsReceived.filter(d => d !== dateStr);
-        let newAFVAC = (current.afvac || []).filter(d => d !== dateStr);
-        let newExceptions = { ...(current.workDayExceptions || {}) };
-
-        if (newSick.includes(dateStr)) {
-            newSick = newSick.filter(d => d !== dateStr);
+        if (getDayValue(newSick, base) > 0) {
+            newSick = removeDate(newSick, base);
         } else {
-            newSick.push(dateStr);
-            delete newExceptions[dateStr];
+            const cleared = clearDateFromAll(current, base, 'sick');
+            newSick = addDate(cleared.sickLeave, base, quantity);
+            updateYearSpecific(id, year, {
+                vacations: cleared.vacations,
+                trainingsGiven: cleared.trainingsGiven,
+                trainingsReceived: cleared.trainingsReceived,
+                afvac: cleared.afvac,
+                sickLeave: newSick,
+                workDayExceptions: newExceptions
+            });
+            return;
         }
 
         updateYearSpecific(id, year, {
-            vacations: newVacations,
-            trainingsGiven: newGiven,
-            trainingsReceived: newReceived,
-            afvac: newAFVAC,
+            vacations: removeDate(current.vacations, base),
+            trainingsGiven: removeDate(current.trainingsGiven, base),
+            trainingsReceived: removeDate(current.trainingsReceived, base),
+            afvac: removeDate(current.afvac || [], base),
             sickLeave: newSick,
             workDayExceptions: newExceptions
         });
@@ -369,37 +415,31 @@ export function PartnerProvider({ children }) {
         if (!partner) return;
         
         const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
 
-        // Check for ANY other status on this day. If exists, block adjustment.
-        const hasOtherAction = 
-            current.vacations.includes(dateStr) || 
-            current.trainingsGiven.includes(dateStr) || 
-            current.trainingsReceived.includes(dateStr) || 
-            current.afvac.includes(dateStr) || 
-            current.sickLeave.includes(dateStr);
-
-        if (hasOtherAction) return;
+        // Check for ANY other status on this day (FULL ou ½). If exists, block adjustment.
+        if (hasAnyStatus(current, base)) return;
 
         const newExceptions = { ...(current.workDayExceptions || {}) };
         
         // Determine if day is already worked in base schedule
-        const dayOfWeek = new Date(dateStr).getDay();
-        const currentWorkDays = getWorkDaysForDate(dateStr, current.workPeriods) || current.workDays || {};
+        const dayOfWeek = new Date(base).getDay();
+        const currentWorkDays = getWorkDaysForDate(base, current.workPeriods) || current.workDays || {};
         const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
 
-        const currentValue = newExceptions[dateStr];
+        const currentValue = newExceptions[base];
 
         if (currentValue === undefined) {
             // If normally worked, we can only subtract
             if (isNormallyWorked) {
-                newExceptions[dateStr] = false; // Forced Off (-)
+                newExceptions[base] = false; // Forced Off (-)
             } else {
                 // Not worked (off day or weekend), we can only add
-                newExceptions[dateStr] = true; // Forced Worked (+)
+                newExceptions[base] = true; // Forced Worked (+)
             }
         } else {
             // Revert to normal
-            delete newExceptions[dateStr];
+            delete newExceptions[base];
         }
 
         updateYearSpecific(id, year, {
@@ -407,8 +447,8 @@ export function PartnerProvider({ children }) {
         });
     };
 
-    const applyBatchDates = (id, dates, mode, action) => {
-        // action: 'add' or 'remove'
+    const applyBatchDates = (id, dates, mode, action, quantity = 'FULL') => {
+        // action: 'add' or 'remove', quantity: 'FULL' | 'AM' | 'PM' (ignoré en mode adjustment)
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
@@ -420,77 +460,78 @@ export function PartnerProvider({ children }) {
         let newSick = [...(current.sickLeave || [])];
         let newExceptions = { ...(current.workDayExceptions || {}) };
 
-        dates.forEach(dateStr => {
+        dates.forEach(raw => {
+            const base = stripPart(raw);
+            const q = mode === 'adjustment' ? 'FULL' : quantity;
             if (mode === 'vacation') {
                 if (action === 'remove') {
-                    newVacations = newVacations.filter(d => d !== dateStr);
+                    newVacations = removeDate(newVacations, base);
                 } else {
-                    if (!newVacations.includes(dateStr)) newVacations.push(dateStr);
-                    newGiven = newGiven.filter(d => d !== dateStr);
-                    newReceived = newReceived.filter(d => d !== dateStr);
-                    delete newExceptions[dateStr];
+                    newVacations = addDate(newVacations, base, q);
+                    newGiven = removeDate(newGiven, base);
+                    newReceived = removeDate(newReceived, base);
+                    newAFVAC = removeDate(newAFVAC, base);
+                    newSick = removeDate(newSick, base);
+                    delete newExceptions[base];
                 }
             } else if (mode === 'given') {
                 if (action === 'remove') {
-                    newGiven = newGiven.filter(d => d !== dateStr);
+                    newGiven = removeDate(newGiven, base);
                 } else {
-                    if (!newGiven.includes(dateStr)) newGiven.push(dateStr);
-                    newVacations = newVacations.filter(d => d !== dateStr);
-                    newReceived = newReceived.filter(d => d !== dateStr);
-                    delete newExceptions[dateStr];
+                    newGiven = addDate(newGiven, base, q);
+                    newVacations = removeDate(newVacations, base);
+                    newReceived = removeDate(newReceived, base);
+                    newAFVAC = removeDate(newAFVAC, base);
+                    newSick = removeDate(newSick, base);
+                    delete newExceptions[base];
                 }
             } else if (mode === 'received') {
                 if (action === 'remove') {
-                    newReceived = newReceived.filter(d => d !== dateStr);
+                    newReceived = removeDate(newReceived, base);
                 } else {
-                    if (!newReceived.includes(dateStr)) newReceived.push(dateStr);
-                    newVacations = newVacations.filter(d => d !== dateStr);
-                    newGiven = newGiven.filter(d => d !== dateStr);
-                    delete newExceptions[dateStr];
+                    newReceived = addDate(newReceived, base, q);
+                    newVacations = removeDate(newVacations, base);
+                    newGiven = removeDate(newGiven, base);
+                    newAFVAC = removeDate(newAFVAC, base);
+                    newSick = removeDate(newSick, base);
+                    delete newExceptions[base];
                 }
             } else if (mode === 'afvac') {
                 if (action === 'remove') {
-                    newAFVAC = newAFVAC.filter(d => d !== dateStr);
+                    newAFVAC = removeDate(newAFVAC, base);
                 } else {
-                    if (!newAFVAC.includes(dateStr)) newAFVAC.push(dateStr);
-                    newVacations = newVacations.filter(d => d !== dateStr);
-                    newGiven = newGiven.filter(d => d !== dateStr);
-                    newReceived = newReceived.filter(d => d !== dateStr);
-                    newSick = newSick.filter(d => d !== dateStr);
-                    delete newExceptions[dateStr];
+                    newAFVAC = addDate(newAFVAC, base, q);
+                    newVacations = removeDate(newVacations, base);
+                    newGiven = removeDate(newGiven, base);
+                    newReceived = removeDate(newReceived, base);
+                    newSick = removeDate(newSick, base);
+                    delete newExceptions[base];
                 }
             } else if (mode === 'sick') {
                 if (action === 'remove') {
-                    newSick = newSick.filter(d => d !== dateStr);
+                    newSick = removeDate(newSick, base);
                 } else {
-                    if (!newSick.includes(dateStr)) newSick.push(dateStr);
-                    newVacations = newVacations.filter(d => d !== dateStr);
-                    newGiven = newGiven.filter(d => d !== dateStr);
-                    newReceived = newReceived.filter(d => d !== dateStr);
-                    newAFVAC = newAFVAC.filter(d => d !== dateStr);
-                    delete newExceptions[dateStr];
+                    newSick = addDate(newSick, base, q);
+                    newVacations = removeDate(newVacations, base);
+                    newGiven = removeDate(newGiven, base);
+                    newReceived = removeDate(newReceived, base);
+                    newAFVAC = removeDate(newAFVAC, base);
+                    delete newExceptions[base];
                 }
             } else if (mode === 'adjustment') {
-                const hasOtherAction = 
-                    current.vacations.includes(dateStr) || 
-                    current.trainingsGiven.includes(dateStr) || 
-                    current.trainingsReceived.includes(dateStr) || 
-                    current.afvac.includes(dateStr) || 
-                    current.sickLeave.includes(dateStr);
+                if (hasAnyStatus({ vacations: newVacations, trainingsGiven: newGiven, trainingsReceived: newReceived, afvac: newAFVAC, sickLeave: newSick }, base)) return;
         
-                if (hasOtherAction) return;
-        
-                const dayOfWeek = new Date(dateStr).getDay();
-                const currentWorkDays = getWorkDaysForDate(dateStr, current.workPeriods) || current.workDays || {};
+                const dayOfWeek = new Date(base).getDay();
+                const currentWorkDays = getWorkDaysForDate(base, current.workPeriods) || current.workDays || {};
                 const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
         
                 if (action === 'remove') {
-                    delete newExceptions[dateStr];
+                    delete newExceptions[base];
                 } else {
                     if (isNormallyWorked) {
-                        newExceptions[dateStr] = false;
+                        newExceptions[base] = false;
                     } else {
-                        newExceptions[dateStr] = true;
+                        newExceptions[base] = true;
                     }
                 }
             }

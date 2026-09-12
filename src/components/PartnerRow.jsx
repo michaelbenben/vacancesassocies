@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
 import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays } from '../utils/dateUtils';
+import { sumDays, formatDays } from '../utils/halfDays';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
@@ -10,13 +11,14 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
 
     const [activeTab, setActiveTab] = useState('calendar');
 
-    // Calculate vacation days used from calendar selections
+    // Calculate vacation days used from calendar selections (FULL=1, AM/PM=0.5)
     const usedVacationDays = useMemo(() => {
         if (!partner.vacations.length) return 0;
-        return partner.vacations.reduce((acc, dateStr) => {
+        const total = partner.vacations.reduce((acc, dateStr) => {
             const deducted = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
             return acc + deducted;
         }, 0);
+        return Math.round(total * 2) / 2;
     }, [partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays]);
 
     // Calculate holiday days that fall on working days (when toggle is ON)
@@ -90,9 +92,9 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
     const totalAvailable = partner.allocations.vacation;
     const progressPercent = totalAvailable > 0 ? Math.min(100, (totalUsed / totalAvailable) * 100) : 100;
 
-    // Training stats
-    const usedTrainingReceived = (partner.trainingsReceived || []).length;
-    const usedTrainingGiven = (partner.trainingsGiven || []).length;
+    // Training stats (FULL=1, AM/PM=0.5)
+    const usedTrainingReceived = sumDays(partner.trainingsReceived || []);
+    const usedTrainingGiven = sumDays(partner.trainingsGiven || []);
     const allocatedTrainingReceived = partner.allocations.trainingReceive;
     const allocatedTrainingGiven = partner.allocations.trainingGive;
 
@@ -147,9 +149,9 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                             </div>
                             <div className="flex items-baseline justify-end gap-1">
                                 <span className={`text-2xl font-bold tabular-nums tracking-tight ${workedDaysColor}`}>
-                                    {workedDays}
+                                    {formatDays(workedDays)}
                                 </span>
-                                <span className="text-sm font-medium text-gray-400">/ {expectedWorkedDays}j</span>
+                                <span className="text-sm font-medium text-gray-400">/ {formatDays(expectedWorkedDays)}j</span>
                             </div>
                         </div>
 
@@ -158,7 +160,7 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                             <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formations reçues</p>
                             <div className="flex items-baseline justify-end gap-1">
                                 <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
-                                    {usedTrainingReceived}
+                                    {formatDays(usedTrainingReceived)}
                                 </span>
                                 <span className="text-xs font-medium text-gray-400">/ {allocatedTrainingReceived}j</span>
                             </div>
@@ -172,7 +174,7 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                             <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">formations données</p>
                             <div className="flex items-baseline justify-end gap-1">
                                 <span className="text-xl font-bold tabular-nums tracking-tight text-gray-700">
-                                    {usedTrainingGiven}
+                                    {formatDays(usedTrainingGiven)}
                                 </span>
                                 <span className="text-xs font-medium text-gray-400">/ {allocatedTrainingGiven}j</span>
                             </div>
@@ -186,7 +188,7 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                             <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">Congés restants</p>
                             <div className="flex items-baseline justify-end gap-1 mb-2">
                                 <span className={`text-2xl font-bold tabular-nums tracking-tight ${isOverLimit ? 'text-red-500' : 'text-gray-900'}`}>
-                                    {remaining}
+                                    {formatDays(remaining)}
                                 </span>
                                 <span className="text-sm font-medium text-gray-400">/ {totalAvailable}</span>
                             </div>

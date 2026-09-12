@@ -1,5 +1,6 @@
 import { isWeekend, parseISO, eachDayOfInterval, startOfYear, endOfYear, format } from 'date-fns';
 import { isWorkedHoliday } from './holidays.js';
+import { stripPart, getDayValue } from './halfDays.js';
 
 /**
  * Calculate the number of working days taken between two dates for a specific partner.
@@ -13,8 +14,15 @@ import { isWorkedHoliday } from './holidays.js';
  * @returns {number} count of days deducted
  */
 export function calculateDeductedDays(start, end, partnerWorkDays, holidays, countHolidaysAsLeave = false, workPeriods = [], workDayExceptions = {}) {
-    const startDate = typeof start === 'string' ? parseISO(start) : start;
-    const endDate = typeof end === 'string' ? parseISO(end) : end;
+    // Support des clés demi-journées ("YYYY-MM-DD-AM/PM") : on calcule sur la date de base puis x0.5
+    const rawStart = typeof start === 'string' ? stripPart(start) : start;
+    const rawEnd = typeof end === 'string' ? stripPart(end) : end;
+    const isHalfKey = (typeof start === 'string' && (start.endsWith('-AM') || start.endsWith('-PM')))
+        || (typeof end === 'string' && (end.endsWith('-AM') || end.endsWith('-PM')));
+    const factor = isHalfKey ? 0.5 : 1;
+
+    const startDate = typeof rawStart === 'string' ? parseISO(rawStart) : rawStart;
+    const endDate = typeof rawEnd === 'string' ? parseISO(rawEnd) : rawEnd;
 
     // Generate all days in interval
     const days = eachDayOfInterval({ start: startDate, end: endDate });
@@ -47,11 +55,11 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
         }
 
         if (isNormallyWorked) {
-            count++;
+            count += factor;
         }
     });
 
-    return count;
+    return Math.round(count * 2) / 2;
 }
 
 /**
@@ -90,60 +98,68 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
     const yearEnd = endOfYear(yearStart);
     const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
 
-    const vacationSet = new Set(vacations);
-    const afvacSet = new Set(afvac);
-    const sickLeaveSet = new Set(sickLeave);
-    // Only training types count as worked even on non-scheduled days
-    const extraWorkedDays = new Set([...trainingsReceived, ...trainingsGiven]);
-
     let count = 0;
 
     days.forEach(day => {
         const dateStr = format(day, 'yyyy-MM-dd');
         const dayOfWeek = day.getDay();
 
-        // Formations (reçues ou données) on ANY day = extra worked day
-        if (extraWorkedDays.has(dateStr)) {
-            count++;
+        const trainingVal = Math.max(
+            getDayValue(trainingsReceived, dateStr),
+            getDayValue(trainingsGiven, dateStr)
+        );
+        const vacationVal = getDayValue(vacations, dateStr);
+        const afvacVal = getDayValue(afvac, dateStr);
+        const sickVal = getDayValue(sickLeave, dateStr);
+
+        // Formations : comptent même sur jour non-travaillé / week-end / férié.
+        // FULL -> 1j. HALF -> 0.5j si jour non-travaillé, sinon jour complet (0.5 travail + 0.5 formation).
+        if (trainingVal >= 1) {
+            count += 1;
             return;
         }
 
-        // Never count weekends (unless it was a training, handled above)
-        if (isWeekend(day)) return;
-
         const exception = workDayExceptions[dateStr];
 
-        // Never count public holidays (except Lundi de Pentecôte which is worked)
-        // UNLESS there is a manual adjustment forcing it to be worked (+)
+        // Base travaillée (0 ou 1) : week-ends et fériés (hors Pentecôte / forçage +) = 0
+        let base = 0;
+        const isWknd = isWeekend(day);
         const holidayName = holidays[dateStr];
+        let isOffHoliday = false;
         if (holidayName && exception !== true) {
             const isPentecote = holidayName.toLowerCase().includes('pentecôte');
-            if (!isPentecote) return;
+            if (!isPentecote) isOffHoliday = true;
+        }
+        if (!isWknd && !isOffHoliday) {
+            if (exception !== undefined) {
+                base = exception === true ? 1 : 0;
+            } else {
+                const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
+                base = currentWorkDays[dayOfWeek] === true ? 1 : 0;
+            }
+        } else if (exception === true) {
+            base = 1;
         }
 
-        // Check for manual exceptions
-        let isNormallyWorked = false;
-        if (exception !== undefined) {
-            isNormallyWorked = exception === true;
-        } else {
-            // 2. Check work days for this specific date (from periods or global)
-            const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
-            isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+        if (trainingVal > 0) {
+            // Demi-formation : 0.5 si posé sur repos, sinon journée complète
+            count += base >= 1 ? 1 : 0.5;
+            return;
         }
 
-        // Skip days the partner doesn't work (normally or by exception)
-        if (!isNormallyWorked) return;
+        if (base === 0) return;
 
-        // Skip vacation days
-        if (vacationSet.has(dateStr)) return;
+        // Absences (congés / AFVAC / maladie) : FULL -> -1, HALF -> -0.5
+        const absent = Math.max(vacationVal, afvacVal, sickVal);
+        if (absent > 0) {
+            count += Math.max(0, base - absent);
+            return;
+        }
 
-        // AFVAC or Sick Leave on working days = not worked
-        if (afvacSet.has(dateStr) || sickLeaveSet.has(dateStr)) return;
-
-        count++;
+        count += base;
     });
 
-    return count;
+    return Math.round(count * 2) / 2;
 }
 
 /**
