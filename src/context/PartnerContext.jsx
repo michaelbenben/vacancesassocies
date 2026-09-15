@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFrenchHolidays, isWorkedHoliday } from '../utils/holidays';
+import { getFrenchHolidays, isWorkedHoliday, isPentecoteOff } from '../utils/holidays';
 import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation } from '../utils/dateUtils';
 import { getDayValue, getDayPart, removeDate, addDate, stripPart } from '../utils/halfDays';
 import { sanitizeExceptions, getBaseWorked, getHalfAdjustmentValue } from '../utils/exceptions.js';
@@ -41,6 +41,7 @@ function createDefaultData() {
         })),
         settings: {
             countHolidaysAsLeave: true,
+            pentecoteOffByYear: {},
         },
         year: 2026,
     };
@@ -175,7 +176,23 @@ export function PartnerProvider({ children }) {
         }));
     }, [database.partners, year, getYearData]);
 
-    const settings = database.settings || { countHolidaysAsLeave: true };
+    const settings = useMemo(() => ({
+        countHolidaysAsLeave: true,
+        pentecoteOffByYear: {},
+        ...(database.settings || {}),
+    }), [database.settings]);
+
+    const pentecoteOff = isPentecoteOff(settings, year);
+    const pentecoteWorked = !pentecoteOff;
+
+    const setPentecoteOff = useCallback((off) => {
+        const prevMap = settings.pentecoteOffByYear || {};
+        const nextMap = { ...prevMap, [String(year)]: !!off };
+        const updated = { ...settings, pentecoteOffByYear: nextMap };
+        const newDb = { ...database, settings: updated };
+        setDatabase(newDb);
+        persistData(newDb);
+    }, [settings, year, database, persistData]);
 
     const updateYear = (newYear) => {
         setYear(newYear);
@@ -438,7 +455,8 @@ export function PartnerProvider({ children }) {
                     base,
                     current.workDays,
                     holidays,
-                    current.workPeriods
+                    current.workPeriods,
+                    pentecoteWorked
                 );
             } else if (currentValue === true) {
                 newExceptions[base] = 0.5;
@@ -452,7 +470,7 @@ export function PartnerProvider({ children }) {
             // Mode FULL : comportement historique, mais base tenant compte
             // fériés/WE via getBaseWorked (plus fiable que planning seul)
             if (currentValue === undefined) {
-                const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods);
+                const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods, pentecoteWorked);
                 newExceptions[base] = baseWorked >= 1 ? false : true;
             } else {
                 // Toute valeur existante (FULL ou demi) -> retour à la normale
@@ -600,7 +618,7 @@ export function PartnerProvider({ children }) {
                 const dow = new Date(`${base}T12:00:00`).getDay();
                 const isWknd = dow === 0 || dow === 6;
                 const holName = holidays[base];
-                const isOffHol = !!holName && !isWorkedHoliday(holName);
+                const isOffHol = !!holName && !isWorkedHoliday(holName, pentecoteWorked);
                 if (mode === 'vacation' && (isWknd || isOffHol)) return;
                 if (mode === 'afvac' && (!current.allocations?.hasAFVAC || isWknd || isOffHol)) return;
                 if (mode === 'sick' && (isWknd || isOffHol)) return;
@@ -667,7 +685,7 @@ export function PartnerProvider({ children }) {
                     delete newExceptions[base];
                 } else {
                     // FULL : base tenant compte fériés/WE (getBaseWorked)
-                    const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods);
+                    const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods, pentecoteWorked);
                     newExceptions[base] = baseWorked >= 1 ? false : true;
                 }
             }
@@ -709,6 +727,9 @@ export function PartnerProvider({ children }) {
             holidays,
             settings,
             setSettings: updateSettings,
+            pentecoteOff,
+            pentecoteWorked,
+            setPentecoteOff,
             updatePartner,
             updateAllocation,
             toggleWorkDay,

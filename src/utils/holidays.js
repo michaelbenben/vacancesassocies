@@ -24,12 +24,40 @@ export async function getFrenchHolidays(year) {
 }
 
 /**
- * Checks if a specific holiday should be worked (e.g., Lundi de Pentecôte).
- * In this specific company context, Lundi de Pentecôte is worked.
- * @param {string} holidayName 
- * @returns {boolean}
+ * Checks if a holiday name is the Lundi de Pentecôte.
  */
-export function isWorkedHoliday(holidayName) {
+export function isPentecote(holidayName) {
     if (!holidayName) return false;
     return holidayName.toLowerCase().includes('pentecôte');
+}
+
+/**
+ * Par défaut, la Pentecôte est fériée (non travaillée) à partir de 2027.
+ * Avant 2027, elle reste travaillée (comportement historique).
+ */
+export function defaultPentecoteOff(year) {
+    return Number(year) >= 2027;
+}
+
+/**
+ * Réglage commun par année : settings.pentecoteOffByYear = { "2026": false, ... }.
+ * true = fériée (repos), false/absent = voir défaut par année.
+ */
+export function isPentecoteOff(settings, year) {
+    const map = settings?.pentecoteOffByYear || {};
+    const key = String(year);
+    if (Object.prototype.hasOwnProperty.call(map, key)) return !!map[key];
+    return defaultPentecoteOff(year);
+}
+
+/**
+ * Checks if a specific holiday should be worked (e.g., Lundi de Pentecôte).
+ * @param {string} holidayName
+ * @param {boolean} pentecoteWorked - false si la Pentecôte est fériée cette année-là.
+ * @returns {boolean}
+ */
+export function isWorkedHoliday(holidayName, pentecoteWorked = true) {
+    if (!holidayName) return false;
+    if (!isPentecote(holidayName)) return false;
+    return !!pentecoteWorked;
 }

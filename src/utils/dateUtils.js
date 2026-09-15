@@ -14,7 +14,7 @@ import { getWorkedWithException } from './exceptions.js';
  * @param {Array} workPeriods - Optional array of { startDate, workDays }
  * @returns {number} count of days deducted
  */
-export function calculateDeductedDays(start, end, partnerWorkDays, holidays, countHolidaysAsLeave = false, workPeriods = [], workDayExceptions = {}) {
+export function calculateDeductedDays(start, end, partnerWorkDays, holidays, countHolidaysAsLeave = false, workPeriods = [], workDayExceptions = {}, pentecoteWorked = true) {
     // Support des clés demi-journées ("YYYY-MM-DD-AM/PM") : on calcule sur la date de base puis x0.5
     const rawStart = typeof start === 'string' ? stripPart(start) : start;
     const rawEnd = typeof end === 'string' ? stripPart(end) : end;
@@ -47,8 +47,8 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
             if (isWeekend(day)) {
                 workedBase = 0;
             } else {
-                // public holidays (except pentecote) are off for deduction
-                if (holidayName && !isWorkedHoliday(holidayName) && !countHolidaysAsLeave) {
+                // public holidays (Pentecôte selon réglage annuel) are off for deduction
+                if (holidayName && !isWorkedHoliday(holidayName, pentecoteWorked) && !countHolidaysAsLeave) {
                     workedBase = 0;
                 } else {
                     const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
@@ -100,7 +100,7 @@ export function calculateRecoveredDays() {
  * @param {Array} workPeriods
  * @returns {number}
  */
-export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations = [], trainingsReceived = [], trainingsGiven = [], afvac = [], workPeriods = [], sickLeave = [], workDayExceptions = {}) {
+export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations = [], trainingsReceived = [], trainingsGiven = [], afvac = [], workPeriods = [], sickLeave = [], workDayExceptions = {}, pentecoteWorked = true) {
     const yearStart = startOfYear(new Date(year, 0, 1));
     const yearEnd = endOfYear(yearStart);
     const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
@@ -128,15 +128,14 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
 
         const exception = workDayExceptions[dateStr];
 
-        // Base travaillée (0 | 0.5 | 1) : week-ends et fériés (hors Pentecôte / forçage) = 0
+        // Base travaillée (0 | 0.5 | 1) : week-ends et fériés (Pentecôte selon réglage / forçage) = 0
         // true => 1, false => 0, ±0.5 => 0.5 (générique, sans distinction Matin/PM)
         let base = 0;
         const isWknd = isWeekend(day);
         const holidayName = holidays[dateStr];
         let isOffHoliday = false;
         if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
-            const isPentecote = holidayName.toLowerCase().includes('pentecôte');
-            if (!isPentecote) isOffHoliday = true;
+            if (!isWorkedHoliday(holidayName, pentecoteWorked)) isOffHoliday = true;
         }
         if (!isWknd && !isOffHoliday) {
             if (exception === true) base = 1;
@@ -195,9 +194,10 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
  * @param {Object} holidays
  * @param {Array} workPeriods
  * @param {Object} _workDayExceptions - ignoré (gardé pour compatibilité d'appel)
+ * @param {boolean} pentecoteWorked - false si Pentecôte fériée cette année-là
  * @returns {number}
  */
-export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, workPeriods = [], _workDayExceptions = {}) {
+export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, workPeriods = [], _workDayExceptions = {}, pentecoteWorked = true) {
     const yearStart = startOfYear(new Date(year, 0, 1));
     const yearEnd = endOfYear(yearStart);
     const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
@@ -211,8 +211,7 @@ export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, wor
 
         const holidayName = holidays[dateStr];
         if (holidayName) {
-            const isPentecote = holidayName.toLowerCase().includes('pentecôte');
-            if (!isPentecote) return;
+            if (!isWorkedHoliday(holidayName, pentecoteWorked)) return;
         }
 
         const dayOfWeek = day.getDay();

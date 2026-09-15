@@ -9,7 +9,7 @@ import { formatExceptionLabel } from '../utils/exceptions.js';
 import { GraduationCap, Umbrella, BookOpen, Activity } from 'lucide-react';
 
 export default function CalendarView({ partner }) {
-    const { year, holidays, settings } = usePartnerContext();
+    const { year, holidays, settings, pentecoteWorked = true } = usePartnerContext();
     const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac' | 'sick' | 'adjustment'
     const [quantity, setQuantity] = useState('FULL'); // 'FULL' | 'HALF'
 
@@ -174,6 +174,7 @@ export default function CalendarView({ partner }) {
                         onDragEnter={handleDragEnter}
                         onHalfClick={handleHalfClick}
                         settings={settings}
+                        pentecoteWorked={pentecoteWorked}
                     />
                 ))}
             </div>
@@ -218,7 +219,7 @@ const HALF_COLORS = {
     sick: '#111827',
 };
 
-function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dragState, onDragStart, onDragEnter, onHalfClick, settings }) {
+function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dragState, onDragStart, onDragEnter, onHalfClick, settings, pentecoteWorked = true }) {
     const monthTime = monthStart.getTime();
     const days = useMemo(() => {
         const end = endOfMonth(monthStart);
@@ -249,8 +250,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
             const isWknd = isWeekend(day);
             let isOffHoliday = false;
             if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
-                const isPentecote = holidayName.toLowerCase().includes('pentecôte');
-                if (!isPentecote) isOffHoliday = true;
+                if (!isWorkedHoliday(holidayName, pentecoteWorked)) isOffHoliday = true;
             }
             if (!isWknd && !isOffHoliday) {
                 if (exception === true) base = 1;
@@ -284,7 +284,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
         });
 
         return Math.round(count * 2) / 2;
-    }, [days, partner, holidays]);
+    }, [days, partner, holidays, pentecoteWorked]);
 
     const vacationDaysThisMonth = useMemo(() => {
         let count = 0;
@@ -293,7 +293,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
         (partner.vacations || []).forEach(key => {
             const base = stripPart(key);
             if (base.startsWith(monthPrefix)) {
-                count += calculateDeductedDays(key, key, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
+                count += calculateDeductedDays(key, key, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions, pentecoteWorked);
             }
         });
         // Jours fériés comptés comme congés (option globale)
@@ -302,10 +302,10 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                 const dateStr = format(day, 'yyyy-MM-dd');
                 if (getDayValue(partner.vacations || [], dateStr) > 0) return; // déjà compté
                 const holidayName = holidays[dateStr];
-                if (holidayName && !holidayName.toLowerCase().includes('pentecôte')) {
+                if (holidayName && !isWorkedHoliday(holidayName, pentecoteWorked)) {
                     const dayOfWeek = day.getDay();
                     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-                        if (calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions) > 0) {
+                        if (calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions, pentecoteWorked) > 0) {
                             count++;
                         }
                     }
@@ -313,7 +313,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
             });
         }
         return Math.round(count * 2) / 2;
-    }, [days, monthStart, partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays, settings?.countHolidaysAsLeave]);
+    }, [days, monthStart, partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays, settings?.countHolidaysAsLeave, pentecoteWorked]);
 
     return (
         <div>
@@ -366,7 +366,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                     const exception = (partner.workDayExceptions || {})[dateStr];
 
                     const holidayName = holidays[dateStr];
-                    const isPentecote = isWorkedHoliday(holidayName);
+                    const isPentecote = isWorkedHoliday(holidayName, pentecoteWorked);
                     const isHoliday = !!holidayName;
 
                     const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};

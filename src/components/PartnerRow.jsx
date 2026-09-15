@@ -2,12 +2,13 @@ import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
 import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays } from '../utils/dateUtils';
+import { isWorkedHoliday } from '../utils/holidays';
 import { sumDays, formatDays } from '../utils/halfDays';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
 
 export default function PartnerRow({ partner, isExpanded, onToggle }) {
-    const { holidays, settings, year } = usePartnerContext();
+    const { holidays, settings, year, pentecoteWorked = true } = usePartnerContext();
 
     const [activeTab, setActiveTab] = useState('calendar');
 
@@ -15,11 +16,11 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
     const usedVacationDays = useMemo(() => {
         if (!partner.vacations.length) return 0;
         const total = partner.vacations.reduce((acc, dateStr) => {
-            const deducted = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions);
+            const deducted = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions, pentecoteWorked);
             return acc + deducted;
         }, 0);
         return Math.round(total * 2) / 2;
-    }, [partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays]);
+    }, [partner.vacations, partner.workDays, partner.workPeriods, partner.workDayExceptions, holidays, pentecoteWorked]);
 
     // Calculate holiday days that fall on working days (when toggle is ON)
     const holidayDaysDeducted = useMemo(() => {
@@ -27,8 +28,8 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
 
         let count = 0;
         Object.entries(holidays).forEach(([dateStr, holidayName]) => {
-            // Skip Pentecost (it's a worked day, handled separately)
-            if (holidayName.toLowerCase().includes('pentecôte')) return;
+            // Pentecôte travaillée : jour normal, gérée à part. Fériée : comme les autres fériés.
+            if (isWorkedHoliday(holidayName, pentecoteWorked)) return;
 
             const date = new Date(dateStr);
             const dayOfWeek = date.getDay();
@@ -38,13 +39,13 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
 
             // Skip if partner doesn't work this day
             // Check based on periods if available
-            const currentWorkDays = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions) > 0;
+            const currentWorkDays = calculateDeductedDays(dateStr, dateStr, partner.workDays, holidays, false, partner.workPeriods, partner.workDayExceptions, pentecoteWorked) > 0;
             if (!currentWorkDays) return;
 
             count++;
         });
         return count;
-    }, [holidays, partner.workDays, partner.workPeriods, partner.workDayExceptions, settings.countHolidaysAsLeave]);
+    }, [holidays, partner.workDays, partner.workPeriods, partner.workDayExceptions, settings.countHolidaysAsLeave, pentecoteWorked]);
 
     // Calculate worked days in the year
     // Formations reçues/données on non-work days count as extra worked days (not as vacation credit)
@@ -59,9 +60,10 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
             partner.afvac || [],
             partner.workPeriods,
             partner.sickLeave || [],
-            partner.workDayExceptions || {}
+            partner.workDayExceptions || {},
+            pentecoteWorked
         );
-    }, [year, partner.workDays, partner.workPeriods, holidays, partner.vacations, partner.trainingsReceived, partner.trainingsGiven, partner.afvac, partner.sickLeave, partner.workDayExceptions]);
+    }, [year, partner.workDays, partner.workPeriods, holidays, partner.vacations, partner.trainingsReceived, partner.trainingsGiven, partner.afvac, partner.sickLeave, partner.workDayExceptions, pentecoteWorked]);
 
     const expectedWorkedDays = useMemo(() => {
         // Objectif stable : planning + fériés - quota congés.
@@ -71,10 +73,12 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
             year,
             partner.workDays,
             holidays,
-            partner.workPeriods
+            partner.workPeriods,
+            {},
+            pentecoteWorked
         );
         return baseExpected - (partner.allocations?.vacation || 0);
-    }, [year, partner.workDays, holidays, partner.workPeriods, partner.allocations?.vacation]);
+    }, [year, partner.workDays, holidays, partner.workPeriods, partner.allocations?.vacation, pentecoteWorked]);
 
     const workedDaysColor = useMemo(() => {
         if (workedDays === expectedWorkedDays) return 'text-emerald-600';

@@ -52,14 +52,14 @@ export function getWorkDaysForDateLocal(date, workPeriods = []) {
 
 /**
  * Base travaillée SANS exception : 0 ou 1.
- * Tient compte week-ends, fériés (Pentecôte travaillée) et planning.
+ * Tient compte week-ends, fériés (Pentecôte selon réglage annuel) et planning.
  */
-export function getBaseWorked(date, workDays, holidays = {}, workPeriods = []) {
+export function getBaseWorked(date, workDays, holidays = {}, workPeriods = [], pentecoteWorked = true) {
   const d = typeof date === 'string' ? new Date(`${date.slice(0, 10)}T12:00:00`) : date;
   const dateStr = toDateStr(date);
   if (isWeekend(d)) return 0;
   const holidayName = holidays[dateStr];
-  if (holidayName && !isWorkedHoliday(holidayName)) return 0;
+  if (holidayName && !isWorkedHoliday(holidayName, pentecoteWorked)) return 0;
   const current = getWorkDaysForDateLocal(d, workPeriods) || workDays || {};
   return current[d.getDay()] === true ? 1 : 0;
 }
@@ -76,17 +76,17 @@ export function getWorkedWithException(base, exception) {
 }
 
 /** Valeur travaillée d'un jour en tenant compte de la map d'exceptions. */
-export function getDailyWorked(date, { workDays, holidays = {}, workPeriods = [], workDayExceptions = {} } = {}) {
+export function getDailyWorked(date, { workDays, holidays = {}, workPeriods = [], workDayExceptions = {}, pentecoteWorked = true } = {}) {
   const dateStr = toDateStr(date);
-  const base = getBaseWorked(dateStr, workDays, holidays, workPeriods);
+  const base = getBaseWorked(dateStr, workDays, holidays, workPeriods, pentecoteWorked);
   const exception = workDayExceptions[dateStr];
   const val = getWorkedWithException(base, exception);
   return Math.round(val * 2) / 2;
 }
 
 /** Signe à poser pour un demi-ajustement : -0.5 si travaillé, +0.5 sinon. */
-export function getHalfAdjustmentValue(date, workDays, holidays = {}, workPeriods = []) {
-  const base = getBaseWorked(date, workDays, holidays, workPeriods);
+export function getHalfAdjustmentValue(date, workDays, holidays = {}, workPeriods = [], pentecoteWorked = true) {
+  const base = getBaseWorked(date, workDays, holidays, workPeriods, pentecoteWorked);
   return base >= 1 ? HALF_REMOVE : HALF_ADD;
 }
 
