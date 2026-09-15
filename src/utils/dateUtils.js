@@ -186,13 +186,18 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
  * This is based purely on their configured schedule and public holidays,
  * before taking any vacations, sick leave, or extra training days into account.
  *
+ * Les ajustements manuels (workDayExceptions) ne modifient PAS l'objectif :
+ * ce sont des écarts constatés (1er chiffre) par rapport à une cible stable (2e chiffre).
+ * Ex : 188/192 avec un jour retiré -> 187/192 (et non 187/191).
+ *
  * @param {number} year
  * @param {Object} partnerWorkDays
  * @param {Object} holidays
  * @param {Array} workPeriods
+ * @param {Object} _workDayExceptions - ignoré (gardé pour compatibilité d'appel)
  * @returns {number}
  */
-export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, workPeriods = [], workDayExceptions = {}) {
+export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, workPeriods = [], _workDayExceptions = {}) {
     const yearStart = startOfYear(new Date(year, 0, 1));
     const yearEnd = endOfYear(yearStart);
     const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
@@ -200,32 +205,24 @@ export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, wor
     let count = 0;
 
     days.forEach(day => {
+        if (isWeekend(day)) return;
+
         const dateStr = format(day, 'yyyy-MM-dd');
-        const dayOfWeek = day.getDay();
-        const exception = workDayExceptions[dateStr];
 
         const holidayName = holidays[dateStr];
-        if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
+        if (holidayName) {
             const isPentecote = holidayName.toLowerCase().includes('pentecôte');
             if (!isPentecote) return;
         }
 
-        let worked = 0;
-        if (exception === true) worked = 1;
-        else if (exception === false) worked = 0;
-        else if (exception === 0.5 || exception === -0.5) worked = 0.5;
-        else {
-            // Pas d'exception : planning (WE déjà filtré, fériés déjà filtrés)
-            // Sur WE on est déjà sorti, mais une exception +/demi sur WE doit compter :
-            // on gère le cas WE ci-dessous.
-            const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
-            worked = currentWorkDays[dayOfWeek] === true ? 1 : 0;
+        const dayOfWeek = day.getDay();
+        const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
+        if (currentWorkDays[dayOfWeek] === true) {
+            count++;
         }
-
-        count += worked;
     });
 
-    return Math.round(count * 2) / 2;
+    return count;
 }
 
 /**

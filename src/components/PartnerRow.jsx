@@ -64,15 +64,17 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
     }, [year, partner.workDays, partner.workPeriods, holidays, partner.vacations, partner.trainingsReceived, partner.trainingsGiven, partner.afvac, partner.sickLeave, partner.workDayExceptions]);
 
     const expectedWorkedDays = useMemo(() => {
+        // Objectif stable : planning + fériés - quota congés.
+        // Les ajustements manuels (+/-) n'impactent que les jours travaillés,
+        // jamais l'objectif.
         const baseExpected = calculateExpectedWorkedDays(
             year,
             partner.workDays,
             holidays,
-            partner.workPeriods,
-            partner.workDayExceptions || {}
+            partner.workPeriods
         );
         return baseExpected - (partner.allocations?.vacation || 0);
-    }, [year, partner.workDays, holidays, partner.workPeriods, partner.workDayExceptions, partner.allocations?.vacation]);
+    }, [year, partner.workDays, holidays, partner.workPeriods, partner.allocations?.vacation]);
 
     const workedDaysColor = useMemo(() => {
         if (workedDays === expectedWorkedDays) return 'text-emerald-600';
@@ -144,7 +146,7 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                                     Déduits : congés, AFVAC, maladie et ajustements (jours retirés).
                                     <br/><br/>
                                     <span className="text-gray-300 font-bold block mt-2 mb-1 border-b border-gray-700 pb-1">Attendu à la fin de l'année :</span>
-                                    Le nombre de jours de travail prévus sur l'année (selon le planning et les jours fériés), auquel on retire le quota de congés payés de l'associé ({partner.allocations?.vacation || 0}j). Ne prend en compte aucune autre absence (AFVAC, maladie).
+                                    Le nombre de jours de travail prévus sur l'année (selon le planning et les jours fériés), auquel on retire le quota de congés payés de l'associé ({partner.allocations?.vacation || 0}j). Ne prend en compte aucune autre absence (AFVAC, maladie) ni les ajustements manuels, qui ne font varier que le total travaillé.
                                 </div>
                             </div>
                             <div className="flex items-baseline justify-end gap-1">
