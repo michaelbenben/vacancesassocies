@@ -429,6 +429,15 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
 
                     // Interaction Logic
                     const hasOtherAction = isVacation || isGiven || isReceived || isAFVAC || isSick;
+                    // Statut posé pour le mode courant (FULL ou ½) : autorise toujours le retrait,
+                    // même si le jour est devenu non-posable (ex. Pentecôte basculée fériée).
+                    const hasStatusForMode =
+                        mode === 'vacation' ? isVacation :
+                        mode === 'given' ? isGiven :
+                        mode === 'received' ? isReceived :
+                        mode === 'afvac' ? isAFVAC :
+                        mode === 'sick' ? isSick :
+                        mode === 'adjustment' ? exception !== undefined : false;
                     let isDisabled = false;
                     if (mode === 'vacation') {
                         isDisabled = isWknd || (isHoliday && !isPentecote);
@@ -443,6 +452,8 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                         // Training modes
                         isDisabled = false;
                     }
+                    // Un jour déjà posé dans ce mode reste cliquable pour le retirer/nettoyer.
+                    if (hasStatusForMode) isDisabled = false;
 
                     const inDragRange = quantity !== 'HALF' ? isDateInRange(dateStr, dragState.start, dragState.current) : false;
                     const dragClasses = inDragRange ? `ring-2 ring-offset-1 ${dragState.action === 'add' ? 'ring-primary' : 'ring-red-400 opacity-50'}` : '';
