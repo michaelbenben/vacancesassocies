@@ -1,6 +1,7 @@
 import { isWeekend, parseISO, eachDayOfInterval, startOfYear, endOfYear, format } from 'date-fns';
 import { isWorkedHoliday } from './holidays.js';
 import { stripPart, getDayValue } from './halfDays.js';
+import { getWorkedWithException } from './exceptions.js';
 
 /**
  * Calculate the number of working days taken between two dates for a specific partner.
@@ -35,26 +36,32 @@ export function calculateDeductedDays(start, end, partnerWorkDays, holidays, cou
         const holidayName = holidays[dateStr];
         const exception = workDayExceptions[dateStr];
 
-        // determine if this day should be treated as normally worked
-        let isNormallyWorked = false;
+        // Base travaillée avec ajustements (0 | 0.5 | 1).
+        // Demi-ajustements (±0,5) valent 0.5 absolu.
+        let workedBase = 0;
         if (exception !== undefined) {
-            isNormallyWorked = exception === true;
+            // true => 1 même sur WE/férié ; false => 0 ; demis => 0.5
+            workedBase = getWorkedWithException(0, exception);
         } else {
             // weekends: no one works without exception
             if (isWeekend(day)) {
-                isNormallyWorked = false;
+                workedBase = 0;
             } else {
                 // public holidays (except pentecote) are off for deduction
                 if (holidayName && !isWorkedHoliday(holidayName) && !countHolidaysAsLeave) {
-                    isNormallyWorked = false;
+                    workedBase = 0;
                 } else {
                     const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
-                    isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+                    workedBase = currentWorkDays[dayOfWeek] === true ? 1 : 0;
                 }
             }
         }
 
-        if (isNormallyWorked) {
+        if (workedBase <= 0) return;
+        // Jour demi-travaillé (ajustement ±0,5) : on ne peut déduire que 0,5 max.
+        if (workedBase === 0.5) {
+            count += 0.5;
+        } else {
             count += factor;
         }
     });
@@ -121,29 +128,41 @@ export function calculateWorkedDays(year, partnerWorkDays, holidays, vacations =
 
         const exception = workDayExceptions[dateStr];
 
-        // Base travaillée (0 ou 1) : week-ends et fériés (hors Pentecôte / forçage +) = 0
+        // Base travaillée (0 | 0.5 | 1) : week-ends et fériés (hors Pentecôte / forçage) = 0
+        // true => 1, false => 0, ±0.5 => 0.5 (générique, sans distinction Matin/PM)
         let base = 0;
         const isWknd = isWeekend(day);
         const holidayName = holidays[dateStr];
         let isOffHoliday = false;
-        if (holidayName && exception !== true) {
+        if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
             const isPentecote = holidayName.toLowerCase().includes('pentecôte');
             if (!isPentecote) isOffHoliday = true;
         }
         if (!isWknd && !isOffHoliday) {
-            if (exception !== undefined) {
-                base = exception === true ? 1 : 0;
-            } else {
+            if (exception === true) base = 1;
+            else if (exception === false) base = 0;
+            else if (exception === 0.5 || exception === -0.5) base = 0.5;
+            else {
                 const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
                 base = currentWorkDays[dayOfWeek] === true ? 1 : 0;
             }
         } else if (exception === true) {
             base = 1;
+        } else if (exception === 0.5 || exception === -0.5) {
+            // Demi-ajout sur WE/férié => 0.5 travaillé
+            base = 0.5;
         }
 
         if (trainingVal > 0) {
             // Demi-formation : 0.5 si posé sur repos, sinon journée complète
-            count += base >= 1 ? 1 : 0.5;
+            // base 0.5 (demi-ajustement) + demi-formation => 0.5 minimum, 1 si base pleine
+            if (base === 0) {
+                count += 0.5;
+            } else if (base === 0.5) {
+                count += trainingVal >= 1 ? 1 : 0.5;
+            } else {
+                count += 1;
+            }
             return;
         }
 
@@ -181,32 +200,32 @@ export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, wor
     let count = 0;
 
     days.forEach(day => {
-        if (isWeekend(day)) return;
-
         const dateStr = format(day, 'yyyy-MM-dd');
         const dayOfWeek = day.getDay();
         const exception = workDayExceptions[dateStr];
 
         const holidayName = holidays[dateStr];
-        if (holidayName && exception !== true) {
+        if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
             const isPentecote = holidayName.toLowerCase().includes('pentecôte');
             if (!isPentecote) return;
         }
 
-        let isNormallyWorked = false;
-        if (exception !== undefined) {
-            isNormallyWorked = exception === true;
-        } else {
+        let worked = 0;
+        if (exception === true) worked = 1;
+        else if (exception === false) worked = 0;
+        else if (exception === 0.5 || exception === -0.5) worked = 0.5;
+        else {
+            // Pas d'exception : planning (WE déjà filtré, fériés déjà filtrés)
+            // Sur WE on est déjà sorti, mais une exception +/demi sur WE doit compter :
+            // on gère le cas WE ci-dessous.
             const currentWorkDays = getWorkDaysForDate(day, workPeriods) || partnerWorkDays;
-            isNormallyWorked = currentWorkDays[dayOfWeek] === true;
+            worked = currentWorkDays[dayOfWeek] === true ? 1 : 0;
         }
 
-        if (isNormallyWorked) {
-            count++;
-        }
+        count += worked;
     });
 
-    return count;
+    return Math.round(count * 2) / 2;
 }
 
 /**

@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { getFrenchHolidays } from '../utils/holidays';
-import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation, getWorkDaysForDate } from '../utils/dateUtils';
-import { getDayValue, removeDate, addDate, stripPart } from '../utils/halfDays';
+import { getFrenchHolidays, isWorkedHoliday } from '../utils/holidays';
+import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation } from '../utils/dateUtils';
+import { getDayValue, getDayPart, removeDate, addDate, stripPart } from '../utils/halfDays';
+import { sanitizeExceptions, getBaseWorked, getHalfAdjustmentValue } from '../utils/exceptions.js';
 import { getVacationData, saveVacationData, subscribeToVacationData } from '../firebase';
 
 const PartnerContext = createContext();
@@ -60,7 +61,7 @@ function sanitizeDatabase(data) {
             yearSpecific: Object.keys(p.yearSpecific || {}).reduce((acc, yearKey) => {
                 acc[yearKey] = {
                     ...p.yearSpecific[yearKey],
-                    workDayExceptions: p.yearSpecific[yearKey].workDayExceptions || {}
+                    workDayExceptions: sanitizeExceptions(p.yearSpecific[yearKey].workDayExceptions || {})
                 };
                 return acc;
             }, {})
@@ -163,7 +164,7 @@ export function PartnerProvider({ children }) {
             trainingsReceived: data.trainingsReceived || [],
             afvac: data.afvac || [],
             sickLeave: data.sickLeave || [],
-            workDayExceptions: data.workDayExceptions || {}
+            workDayExceptions: sanitizeExceptions(data.workDayExceptions || {})
         };
     }, []);
 
@@ -258,11 +259,14 @@ export function PartnerProvider({ children }) {
             getDayValue(current.sickLeave || [], base) > 0;
     };
 
+    const normalizeQuantity = (q) => (q === 'HALF' ? 'AM' : q);
+
     const toggleVacation = (id, dateStr, quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
         const base = stripPart(dateStr);
+        quantity = normalizeQuantity(quantity);
 
         let newExceptions = { ...(current.workDayExceptions || {}) };
 
@@ -299,6 +303,7 @@ export function PartnerProvider({ children }) {
         if (!partner) return;
         const current = getYearData(partner, year);
         const base = stripPart(dateStr);
+        quantity = normalizeQuantity(quantity);
 
         let newExceptions = { ...(current.workDayExceptions || {}) };
         delete newExceptions[base];
@@ -343,6 +348,7 @@ export function PartnerProvider({ children }) {
         if (!partner) return;
         const current = getYearData(partner, year);
         const base = stripPart(dateStr);
+        quantity = normalizeQuantity(quantity);
 
         let newExceptions = { ...(current.workDayExceptions || {}) };
         delete newExceptions[base];
@@ -379,6 +385,7 @@ export function PartnerProvider({ children }) {
         if (!partner) return;
         const current = getYearData(partner, year);
         const base = stripPart(dateStr);
+        quantity = normalizeQuantity(quantity);
 
         let newExceptions = { ...(current.workDayExceptions || {}) };
         delete newExceptions[base];
@@ -410,7 +417,7 @@ export function PartnerProvider({ children }) {
         });
     };
 
-    const toggleWorkDayException = (id, dateStr) => {
+    const toggleWorkDayException = (id, dateStr, quantity = 'FULL') => {
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         
@@ -421,25 +428,36 @@ export function PartnerProvider({ children }) {
         if (hasAnyStatus(current, base)) return;
 
         const newExceptions = { ...(current.workDayExceptions || {}) };
-        
-        // Determine if day is already worked in base schedule
-        const dayOfWeek = new Date(base).getDay();
-        const currentWorkDays = getWorkDaysForDate(base, current.workPeriods) || current.workDays || {};
-        const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
-
         const currentValue = newExceptions[base];
 
-        if (currentValue === undefined) {
-            // If normally worked, we can only subtract
-            if (isNormallyWorked) {
-                newExceptions[base] = false; // Forced Off (-)
+        if (quantity === 'HALF') {
+            // Cycle demi générique (sans distinction Matin/PM) : vide <-> ±0,5
+            // FULL existant -> demi de même sens (true -> +0,5 / false -> -0,5)
+            if (currentValue === undefined) {
+                newExceptions[base] = getHalfAdjustmentValue(
+                    base,
+                    current.workDays,
+                    holidays,
+                    current.workPeriods
+                );
+            } else if (currentValue === true) {
+                newExceptions[base] = 0.5;
+            } else if (currentValue === false) {
+                newExceptions[base] = -0.5;
             } else {
-                // Not worked (off day or weekend), we can only add
-                newExceptions[base] = true; // Forced Worked (+)
+                // 0.5 / -0.5 -> retour à la normale
+                delete newExceptions[base];
             }
         } else {
-            // Revert to normal
-            delete newExceptions[base];
+            // Mode FULL : comportement historique, mais base tenant compte
+            // fériés/WE via getBaseWorked (plus fiable que planning seul)
+            if (currentValue === undefined) {
+                const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods);
+                newExceptions[base] = baseWorked >= 1 ? false : true;
+            } else {
+                // Toute valeur existante (FULL ou demi) -> retour à la normale
+                delete newExceptions[base];
+            }
         }
 
         updateYearSpecific(id, year, {
@@ -447,8 +465,117 @@ export function PartnerProvider({ children }) {
         });
     };
 
+    /**
+     * Cycle demi-journée au clic unitaire (drag désactivé en HALF).
+     * Congés/formations/AFVAC/maladie : vide -> AM -> PM -> vide (FULL -> AM).
+     * Ajustements : vide <-> ±0,5 (FULL -> demi même sens).
+     */
+    const cycleHalfDay = (id, dateStr, mode) => {
+        const partner = database.partners.find(p => p.id === id);
+        if (!partner) return;
+        const current = getYearData(partner, year);
+        const base = stripPart(dateStr);
+
+        if (mode === 'adjustment') {
+            toggleWorkDayException(id, base, 'HALF');
+            return;
+        }
+
+        const getListForMode = (m) => {
+            if (m === 'vacation') return current.vacations;
+            if (m === 'given') return current.trainingsGiven;
+            if (m === 'received') return current.trainingsReceived;
+            if (m === 'afvac') return current.afvac || [];
+            if (m === 'sick') return current.sickLeave || [];
+            return [];
+        };
+
+        const currentList = getListForMode(mode);
+        const part = getDayPart(currentList, base);
+
+        let newVacations = [...current.vacations];
+        let newGiven = [...current.trainingsGiven];
+        let newReceived = [...current.trainingsReceived];
+        let newAFVAC = [...(current.afvac || [])];
+        let newSick = [...(current.sickLeave || [])];
+        let newExceptions = { ...(current.workDayExceptions || {}) };
+
+        const applyToMode = (m, newList) => {
+            if (m === 'vacation') newVacations = newList;
+            else if (m === 'given') newGiven = newList;
+            else if (m === 'received') newReceived = newList;
+            else if (m === 'afvac') newAFVAC = newList;
+            else if (m === 'sick') newSick = newList;
+        };
+
+        if (part === null) {
+            // Vide (pour ce mode) -> AM. Si un autre statut occupe le jour, on l'écrase.
+            const cleared = clearDateFromAll(current, base, mode === 'vacation' ? 'vacations' : mode === 'given' ? 'given' : mode === 'received' ? 'received' : mode === 'afvac' ? 'afvac' : mode === 'sick' ? 'sick' : null);
+            newVacations = cleared.vacations;
+            newGiven = cleared.trainingsGiven;
+            newReceived = cleared.trainingsReceived;
+            newAFVAC = cleared.afvac;
+            newSick = cleared.sickLeave;
+            const target = mode === 'vacation' ? cleared.vacations : mode === 'given' ? cleared.trainingsGiven : mode === 'received' ? cleared.trainingsReceived : mode === 'afvac' ? cleared.afvac : cleared.sickLeave;
+            applyToMode(mode, addDate(target, base, 'AM'));
+            delete newExceptions[base];
+        } else if (part === 'AM') {
+            // AM -> PM (remplace dans la même liste)
+            applyToMode(mode, addDate(removeDate(currentList, base), base, 'PM'));
+            delete newExceptions[base];
+        } else if (part === 'PM') {
+            // PM -> vide
+            applyToMode(mode, removeDate(currentList, base));
+        } else {
+            // FULL -> AM (écrase, choix validé)
+            const cleared = clearDateFromAll(current, base, mode === 'vacation' ? 'vacations' : mode === 'given' ? 'given' : mode === 'received' ? 'received' : mode === 'afvac' ? 'afvac' : mode === 'sick' ? 'sick' : null);
+            newVacations = cleared.vacations;
+            newGiven = cleared.trainingsGiven;
+            newReceived = cleared.trainingsReceived;
+            newAFVAC = cleared.afvac;
+            newSick = cleared.sickLeave;
+            const target = mode === 'vacation' ? cleared.vacations : mode === 'given' ? cleared.trainingsGiven : mode === 'received' ? cleared.trainingsReceived : mode === 'afvac' ? cleared.afvac : cleared.sickLeave;
+            applyToMode(mode, addDate(target, base, 'AM'));
+            delete newExceptions[base];
+        }
+
+        updateYearSpecific(id, year, {
+            vacations: newVacations,
+            trainingsGiven: newGiven,
+            trainingsReceived: newReceived,
+            afvac: newAFVAC,
+            sickLeave: newSick,
+            workDayExceptions: newExceptions
+        });
+    };
+
     const applyBatchDates = (id, dates, mode, action, quantity = 'FULL') => {
-        // action: 'add' or 'remove', quantity: 'FULL' | 'AM' | 'PM' (ignoré en mode adjustment)
+        // action: 'add' or 'remove'
+        // quantity: 'FULL' | 'HALF' (nouveau) | 'AM' | 'PM' (legacy, encore supporté)
+        // En HALF, le drag multi-jours est désactivé côté UI : on ignore les plages >1 jour
+        // pour éviter tout écrasement massif. Le cycle unitaire passe par cycleHalfDay.
+        if (quantity === 'HALF' && dates.length > 1) return;
+        if (quantity === 'HALF' && dates.length === 1) {
+            if (action === 'remove') {
+                // En HALF, "remove" = retour à vide (compatible drag legacy)
+                const partner = database.partners.find(p => p.id === id);
+                if (!partner) return;
+                const current = getYearData(partner, year);
+                const base = stripPart(dates[0]);
+                if (mode === 'adjustment') {
+                    const newExceptions = { ...(current.workDayExceptions || {}) };
+                    delete newExceptions[base];
+                    updateYearSpecific(id, year, { workDayExceptions: newExceptions });
+                    return;
+                }
+                // Pour les autres modes, remove = retire FULL+AM+PM
+                // Réutilise la logique FULL remove
+                quantity = 'FULL';
+            } else {
+                cycleHalfDay(id, stripPart(dates[0]), mode);
+                return;
+            }
+        }
         const partner = database.partners.find(p => p.id === id);
         if (!partner) return;
         const current = getYearData(partner, year);
@@ -463,6 +590,21 @@ export function PartnerProvider({ children }) {
         dates.forEach(raw => {
             const base = stripPart(raw);
             const q = mode === 'adjustment' ? 'FULL' : quantity;
+            // Filtre anti-parasites pour le drag multi-jours (B1 tester) :
+            // même règles que isDisabled côté calendrier (Pentecôte posable).
+            // Les suppressions (remove) restent toujours autorisées pour nettoyer.
+            // Note holidays race (B3) : si holidays pas encore chargés ({}), le filtre
+            // fériés est inopérant sur ~11j/an pendant ~1-2s ; le WE reste filtré.
+            // Direction des ajustements utilise getBaseWorked avec fallback planning.
+            if (action === 'add') {
+                const dow = new Date(`${base}T12:00:00`).getDay();
+                const isWknd = dow === 0 || dow === 6;
+                const holName = holidays[base];
+                const isOffHol = !!holName && !isWorkedHoliday(holName);
+                if (mode === 'vacation' && (isWknd || isOffHol)) return;
+                if (mode === 'afvac' && (!current.allocations?.hasAFVAC || isWknd || isOffHol)) return;
+                if (mode === 'sick' && (isWknd || isOffHol)) return;
+            }
             if (mode === 'vacation') {
                 if (action === 'remove') {
                     newVacations = removeDate(newVacations, base);
@@ -521,18 +663,12 @@ export function PartnerProvider({ children }) {
             } else if (mode === 'adjustment') {
                 if (hasAnyStatus({ vacations: newVacations, trainingsGiven: newGiven, trainingsReceived: newReceived, afvac: newAFVAC, sickLeave: newSick }, base)) return;
         
-                const dayOfWeek = new Date(base).getDay();
-                const currentWorkDays = getWorkDaysForDate(base, current.workPeriods) || current.workDays || {};
-                const isNormallyWorked = currentWorkDays[dayOfWeek] === true;
-        
                 if (action === 'remove') {
                     delete newExceptions[base];
                 } else {
-                    if (isNormallyWorked) {
-                        newExceptions[base] = false;
-                    } else {
-                        newExceptions[base] = true;
-                    }
+                    // FULL : base tenant compte fériés/WE (getBaseWorked)
+                    const baseWorked = getBaseWorked(base, current.workDays, holidays, current.workPeriods);
+                    newExceptions[base] = baseWorked >= 1 ? false : true;
                 }
             }
         });
@@ -582,6 +718,7 @@ export function PartnerProvider({ children }) {
             toggleAFVAC,
             toggleSickLeave,
             toggleWorkDayException,
+            cycleHalfDay,
             applyBatchDates,
             isSaving
         }}>

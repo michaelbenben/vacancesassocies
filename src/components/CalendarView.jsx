@@ -5,14 +5,15 @@ import { usePartnerContext } from '../context/PartnerContext';
 import { isWorkedHoliday } from '../utils/holidays';
 import { getWorkDaysForDate, calculateDeductedDays } from '../utils/dateUtils';
 import { getDayValue, getDayPart, formatDays, stripPart } from '../utils/halfDays';
+import { formatExceptionLabel } from '../utils/exceptions.js';
 import { GraduationCap, Umbrella, BookOpen, Activity } from 'lucide-react';
 
 export default function CalendarView({ partner }) {
     const { year, holidays, settings } = usePartnerContext();
     const [mode, setMode] = useState('vacation'); // 'vacation' | 'given' | 'received' | 'afvac' | 'sick' | 'adjustment'
-    const [quantity, setQuantity] = useState('FULL'); // 'FULL' | 'AM' | 'PM'
+    const [quantity, setQuantity] = useState('FULL'); // 'FULL' | 'HALF'
 
-    const { applyBatchDates } = usePartnerContext();
+    const { applyBatchDates, cycleHalfDay } = usePartnerContext();
 
     const [dragState, setDragState] = useState({
         isDragging: false,
@@ -48,15 +49,20 @@ export default function CalendarView({ partner }) {
     }, [dragState, applyBatchDates, partner.id, mode, quantity]);
 
     const handleDragStart = (e, dateStr, isCurrentlyActioned) => {
+        // En HALF, pas de drag : le cycle est géré au clic via handleHalfClick
+        if (quantity === 'HALF') return;
         e.preventDefault();
-        const q = mode === 'adjustment' ? 'FULL' : quantity;
         setDragState({
             isDragging: true,
             start: dateStr,
             current: dateStr,
             action: isCurrentlyActioned ? 'remove' : 'add',
-            quantity: q
+            quantity: 'FULL'
         });
+    };
+
+    const handleHalfClick = (dateStr) => {
+        cycleHalfDay(partner.id, dateStr, mode);
     };
 
     const handleDragEnter = (dateStr) => {
@@ -124,39 +130,31 @@ export default function CalendarView({ partner }) {
                     </button>
                 </div>
 
-                {/* Quantity Switcher — demi-journées */}
-                {mode !== 'adjustment' && (
-                    <div className="inline-flex bg-white border border-gray-200 p-1 rounded-xl gap-1 shadow-sm">
-                        <button
-                            onClick={() => setQuantity('FULL')}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'FULL' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                        >
-                            Journée entière
-                        </button>
-                        <button
-                            onClick={() => setQuantity('AM')}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'AM' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                        >
-                            Matin ½
-                        </button>
-                        <button
-                            onClick={() => setQuantity('PM')}
-                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'PM' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                        >
-                            Après-midi ½
-                        </button>
-                    </div>
-                )}
+                {/* Quantity Switcher — Journée entière / Demi-journée */}
+                <div className="inline-flex bg-white border border-gray-200 p-1 rounded-xl gap-1 shadow-sm">
+                    <button
+                        onClick={() => setQuantity('FULL')}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'FULL' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                        Journée entière
+                    </button>
+                    <button
+                        onClick={() => setQuantity('HALF')}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${quantity === 'HALF' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                        Demi-journée
+                    </button>
+                </div>
 
                 {/* Mode Explanation Text */}
                 <div className="max-w-xl text-center animate-in fade-in slide-in-from-top-1 duration-300">
                     <p className="text-[11px] font-medium text-gray-500 leading-relaxed italic">
-                        {mode === 'vacation' && (quantity === 'FULL' ? "Décompté du solde annuel. Un jour de congé posé sur un jour travaillé réduit le solde de 1." : "Demi-journée décomptée 0,5 du solde. Re-cliquez sur la même demi pour l'annuler.")}
-                        {mode === 'given' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
-                        {mode === 'received' && "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé."}
-                        {mode === 'afvac' && "Absence pour congrès. Décomptée des jours travaillés mais n'impacte pas le solde de congés."}
-                        {mode === 'sick' && "Absence maladie. Décomptée des jours travaillés mais n'impacte pas le solde de congés."}
-                        {mode === 'adjustment' && "Modifications manuelles du planning. Ajoutez un jour (+) ou retirez-en un (-) pour ajuster le total travaillé."}
+                        {mode === 'vacation' && (quantity === 'FULL' ? "Décompté du solde annuel. Un jour de congé posé sur un jour travaillé réduit le solde de 1." : "1er clic = Matin, 2e = Après-midi, 3e = annule. Décompté 0,5 du solde.")}
+                        {mode === 'given' && (quantity === 'FULL' ? "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé." : "1er clic = Matin, 2e = Après-midi, 3e = annule.")}
+                        {mode === 'received' && (quantity === 'FULL' ? "Considéré comme du temps de travail effectif. Posée sur un jour de repos, elle augmente le total travaillé." : "1er clic = Matin, 2e = Après-midi, 3e = annule.")}
+                        {mode === 'afvac' && (quantity === 'FULL' ? "Absence pour congrès. Décomptée des jours travaillés mais n'impacte pas le solde de congés." : "1er clic = Matin, 2e = Après-midi, 3e = annule.")}
+                        {mode === 'sick' && (quantity === 'FULL' ? "Absence maladie. Décomptée des jours travaillés mais n'impacte pas le solde de congés." : "1er clic = Matin, 2e = Après-midi, 3e = annule.")}
+                        {mode === 'adjustment' && (quantity === 'FULL' ? "Modifications manuelles du planning. Ajoutez un jour (+) ou retirez-en un (-) pour ajuster le total travaillé." : "Demi-ajustement générique (±0,5) : +0,5 sur repos, -0,5 sur travaillé. Re-cliquez pour annuler.")}
                     </p>
                 </div>
             </div>
@@ -170,10 +168,11 @@ export default function CalendarView({ partner }) {
                         partner={partner}
                         holidays={holidays}
                         mode={mode}
-                        quantity={mode === 'adjustment' ? 'FULL' : quantity}
+                        quantity={quantity}
                         dragState={dragState}
                         onDragStart={handleDragStart}
                         onDragEnter={handleDragEnter}
+                        onHalfClick={handleHalfClick}
                         settings={settings}
                     />
                 ))}
@@ -190,6 +189,8 @@ export default function CalendarView({ partner }) {
                 <div className="flex items-center gap-2"><div className="w-4 h-3 rounded border border-gray-300" style={{ background: 'linear-gradient(to right, #C51F84 50%, #fff 50%)' }}></div> Demi-journée</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500 flex items-center justify-center text-[8px] text-white font-bold">+</div> Ajouté</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-red-500 flex items-center justify-center text-[8px] text-white font-bold">-</div> Retiré</div>
+                <div className="flex items-center gap-2"><div className="h-3 px-1 rounded-full bg-blue-500/90 text-white text-[8px] font-bold flex items-center">+½</div> Demi-ajout</div>
+                <div className="flex items-center gap-2"><div className="h-3 px-1 rounded-full bg-red-500/90 text-white text-[8px] font-bold flex items-center">-½</div> Demi-retrait</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-100 border border-gray-200"></div> Travaillable</div>
             </div>
         </div>
@@ -217,7 +218,7 @@ const HALF_COLORS = {
     sick: '#111827',
 };
 
-function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dragState, onDragStart, onDragEnter, settings }) {
+function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dragState, onDragStart, onDragEnter, onHalfClick, settings }) {
     const monthTime = monthStart.getTime();
     const days = useMemo(() => {
         const end = endOfMonth(monthStart);
@@ -247,22 +248,29 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
             let base = 0;
             const isWknd = isWeekend(day);
             let isOffHoliday = false;
-            if (holidayName && exception !== true) {
+            if (holidayName && exception !== true && exception !== 0.5 && exception !== -0.5) {
                 const isPentecote = holidayName.toLowerCase().includes('pentecôte');
                 if (!isPentecote) isOffHoliday = true;
             }
             if (!isWknd && !isOffHoliday) {
-                if (exception !== undefined) {
-                    base = exception === true ? 1 : 0;
-                } else {
+                if (exception === true) base = 1;
+                else if (exception === false) base = 0;
+                else if (exception === 0.5 || exception === -0.5) base = 0.5;
+                else {
                     const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};
                     base = currentWorkDays[day.getDay()] === true ? 1 : 0;
                 }
             } else if (exception === true) {
                 base = 1;
+            } else if (exception === 0.5 || exception === -0.5) {
+                base = 0.5;
             }
 
-            if (trainingVal > 0) { count += base >= 1 ? 1 : 0.5; return; }
+            if (trainingVal > 0) {
+                if (base === 0) { count += 0.5; return; }
+                if (base === 0.5) { count += trainingVal >= 1 ? 1 : 0.5; return; }
+                count += 1; return;
+            }
             if (base === 0) return;
 
             const absent = Math.max(
@@ -364,12 +372,14 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                     const currentWorkDays = getWorkDaysForDate(day, partner.workPeriods) || partner.workDays || {};
                     let isPartnerWorkDay = currentWorkDays[dayOfWeek] === true;
 
-                    if (exception !== undefined) {
-                        isPartnerWorkDay = exception === true;
-                    }
+                    const isHalfException = exception === 0.5 || exception === -0.5;
+                    if (exception === true) isPartnerWorkDay = true;
+                    else if (exception === false) isPartnerWorkDay = false;
+                    else if (isHalfException) isPartnerWorkDay = true;
+                    else if (exception !== undefined) isPartnerWorkDay = false;
 
                     let isActualWorkDay = isPartnerWorkDay;
-                    if (isHoliday && exception !== true && !isPentecote) {
+                    if (isHoliday && exception !== true && exception !== 0.5 && exception !== -0.5 && !isPentecote) {
                         isActualWorkDay = false;
                     }
 
@@ -423,9 +433,10 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                     if (mode === 'vacation') {
                         isDisabled = isWknd || (isHoliday && !isPentecote);
                     } else if (mode === 'afvac') {
-                        isDisabled = !partner.allocations.hasAFVAC || isHoliday || isWknd;
+                        // Pentecôte travaillée => posable comme en congés
+                        isDisabled = !partner.allocations.hasAFVAC || isWknd || (isHoliday && !isPentecote);
                     } else if (mode === 'sick') {
-                        isDisabled = isHoliday || isWknd;
+                        isDisabled = isWknd || (isHoliday && !isPentecote);
                     } else if (mode === 'adjustment') {
                         isDisabled = hasOtherAction;
                     } else {
@@ -433,7 +444,7 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                         isDisabled = false;
                     }
 
-                    const inDragRange = isDateInRange(dateStr, dragState.start, dragState.current);
+                    const inDragRange = quantity !== 'HALF' ? isDateInRange(dateStr, dragState.start, dragState.current) : false;
                     const dragClasses = inDragRange ? `ring-2 ring-offset-1 ${dragState.action === 'add' ? 'ring-primary' : 'ring-red-400 opacity-50'}` : '';
 
                     // Tooltip text
@@ -445,31 +456,16 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                     else if (isAFVAC) dayTitle = "AFVAC" + partLabel;
                     else if (isSick) dayTitle = "Maladie" + partLabel;
                     else if (isPentecote) dayTitle = holidayName + " (Travaillé)";
-                    else if (exception === true) dayTitle = "Ajustement (Jour travaillé)";
-                    else if (exception === false) dayTitle = "Ajustement (Jour de repos)";
+                    else if (exception !== undefined) dayTitle = formatExceptionLabel(exception);
 
                     const isActionedForMode = () => {
-                        const q = quantity;
-                        if (mode === 'vacation') {
-                            if (q === 'FULL') return vacationVal >= 1;
-                            return getDayPart(partner.vacations || [], dateStr) === q;
-                        }
-                        if (mode === 'given') {
-                            if (q === 'FULL') return givenVal >= 1;
-                            return getDayPart(partner.trainingsGiven || [], dateStr) === q;
-                        }
-                        if (mode === 'received') {
-                            if (q === 'FULL') return receivedVal >= 1;
-                            return getDayPart(partner.trainingsReceived || [], dateStr) === q;
-                        }
-                        if (mode === 'afvac') {
-                            if (q === 'FULL') return afvacVal >= 1;
-                            return getDayPart(partner.afvac || [], dateStr) === q;
-                        }
-                        if (mode === 'sick') {
-                            if (q === 'FULL') return sickVal >= 1;
-                            return getDayPart(partner.sickLeave || [], dateStr) === q;
-                        }
+                        // En HALF, pas de drag : le cycle est géré par onHalfClick
+                        if (quantity === 'HALF') return false;
+                        if (mode === 'vacation') return vacationVal >= 1;
+                        if (mode === 'given') return givenVal >= 1;
+                        if (mode === 'received') return receivedVal >= 1;
+                        if (mode === 'afvac') return afvacVal >= 1;
+                        if (mode === 'sick') return sickVal >= 1;
                         if (mode === 'adjustment') return exception !== undefined;
                         return false;
                     };
@@ -481,10 +477,15 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                             style={halfStyle || undefined}
                             onMouseDown={(e) => {
                                 if (isDisabled) return;
+                                if (quantity === 'HALF') {
+                                    e.preventDefault();
+                                    onHalfClick(dateStr);
+                                    return;
+                                }
                                 onDragStart(e, dateStr, isActionedForMode());
                             }}
                             onMouseEnter={() => {
-                                if (!isDisabled) onDragEnter(dateStr);
+                                if (!isDisabled && quantity !== 'HALF') onDragEnter(dateStr);
                             }}
                             className={`
                 h-9 w-9 rounded-lg flex items-center justify-center text-xs transition-all duration-200 relative group/day
@@ -507,6 +508,12 @@ function MonthGrid({ monthStart, partner, holidays, mode, quantity = 'FULL', dra
                             )}
                             {exception === false && (
                               <div className="absolute top-0 right-0 -mt-1 -mr-1 w-3 h-3 bg-red-500 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">-</div>
+                            )}
+                            {exception === 0.5 && (
+                              <div className="absolute top-0 right-0 -mt-1 -mr-1 h-3 px-1 bg-blue-500/90 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">+½</div>
+                            )}
+                            {exception === -0.5 && (
+                              <div className="absolute top-0 right-0 -mt-1 -mr-1 h-3 px-1 bg-red-500/90 text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold leading-none">-½</div>
                             )}
 
                             {dayTitle && (
