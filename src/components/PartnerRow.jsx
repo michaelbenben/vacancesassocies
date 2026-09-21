@@ -1,16 +1,19 @@
-import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info, BarChart3 } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
-import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays } from '../utils/dateUtils';
+import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays, calculateRecoveryBalance } from '../utils/dateUtils';
 import { isWorkedHoliday } from '../utils/holidays';
 import { sumDays, formatDays } from '../utils/halfDays';
 import PartnerSettings from './PartnerSettings';
 import CalendarView from './CalendarView';
+import PartnerBilanModal from './PartnerBilanModal';
 
 export default function PartnerRow({ partner, isExpanded, onToggle }) {
     const { holidays, settings, year, pentecoteWorked = true } = usePartnerContext();
 
     const [activeTab, setActiveTab] = useState('calendar');
+    const [showBilan, setShowBilan] = useState(false);
+    const closeBilan = useCallback(() => setShowBilan(false), []);
 
     // Calculate vacation days used from calendar selections (FULL=1, AM/PM=0.5)
     const usedVacationDays = useMemo(() => {
@@ -90,13 +93,27 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
         return calculateNormalTrainingAllocation(year, partner.workPeriods, partner.workDays);
     }, [year, partner.workPeriods, partner.workDays]);
 
+    // Jours de récupération : gagnés (jours travaillés au-delà du planning de base)
+    // pris (ajustements « - » sur jour travaillé) et solde à prendre
+    const recovery = useMemo(() => {
+        return calculateRecoveryBalance(
+            year,
+            partner.workDays,
+            holidays,
+            partner.trainingsReceived || [],
+            partner.trainingsGiven || [],
+            partner.workPeriods,
+            partner.workDayExceptions || {},
+            pentecoteWorked
+        );
+    }, [year, partner.workDays, partner.workPeriods, holidays, partner.trainingsReceived, partner.trainingsGiven, partner.workDayExceptions, pentecoteWorked]);
+
     const totalUsed = usedVacationDays + holidayDaysDeducted;
     const remaining = partner.allocations.vacation - totalUsed;
     const isOverLimit = remaining < 0;
 
     // Progress bar
     const totalAvailable = partner.allocations.vacation;
-    const progressPercent = totalAvailable > 0 ? Math.min(100, (totalUsed / totalAvailable) * 100) : 100;
 
     // Training stats (FULL=1, AM/PM=0.5)
     const usedTrainingReceived = sumDays(partner.trainingsReceived || []);
@@ -192,33 +209,50 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                         {/* Congés restants */}
                         <div className="text-right min-w-[140px]">
                             <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400 mb-0.5">Congés restants</p>
-                            <div className="flex items-baseline justify-end gap-1 mb-2">
+                            <div className="flex items-baseline justify-end gap-1">
                                 <span className={`text-2xl font-bold tabular-nums tracking-tight ${isOverLimit ? 'text-red-500' : 'text-gray-900'}`}>
                                     {formatDays(remaining)}
                                 </span>
                                 <span className="text-sm font-medium text-gray-400">/ {totalAvailable}</span>
                             </div>
-                            
-                            {/* Progress bar moved here */}
-                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-full">
-                                <div
-                                    className={`h-full rounded-full transition-all duration-500 ${isOverLimit ? 'bg-red-500' : 'bg-blue-500'}`}
-                                    style={{ width: `${progressPercent}%` }}
-                                />
+
+                            {/* Jours de récupération */}
+                            <div className="flex items-center justify-end gap-1 mt-1.5 group/tooltip relative">
+                                <p className="text-[10px] font-semibold text-gray-400">Récupération :</p>
+                                <span className={`text-xs font-bold tabular-nums ${recovery.remaining < 0 ? 'text-red-500' : 'text-gray-700'}`}>
+                                    {formatDays(recovery.remaining)}j
+                                </span>
+                                <Info className="w-3 h-3 text-gray-300 cursor-help" />
+                                <div className="absolute bottom-full right-0 mb-2 w-56 p-2 bg-gray-900 text-white text-[10px] rounded-lg opacity-0 group-hover/tooltip:opacity-100 transition-all pointer-events-none z-20 font-medium normal-case shadow-xl">
+                                    <span className="text-gray-300 font-bold block mb-1 border-b border-gray-700 pb-1">Solde à prendre : {formatDays(recovery.earned)}j gagnés · {formatDays(recovery.taken)}j pris</span>
+                                    Gagnés : jours travaillés au-delà du planning de base (formation posée sur un jour non travaillé — week-end, férié, jour off — ou jour travaillé en plus via ajustement).
+                                    <br /><br />
+                                    Pris : jours retirés via un ajustement « - » sur un jour normalement travaillé.
+                                </div>
                             </div>
                         </div>
 
-                        <button
-                            className={`
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setShowBilan(true); }}
+                                title="Bilan complet"
+                                aria-label="Ouvrir le bilan"
+                                className="w-10 h-10 rounded-full flex items-center justify-center border bg-white text-gray-400 border-gray-200 hover:border-primary hover:text-primary transition-all duration-200"
+                            >
+                                <BarChart3 className="w-5 h-5" />
+                            </button>
+                            <button
+                                className={`
                 w-10 h-10 rounded-full flex items-center justify-center border transition-all duration-200
                 ${isExpanded
                                     ? 'bg-gray-900 text-white border-gray-900 rotate-180'
                                     : 'bg-white text-gray-400 border-gray-200 hover:border-primary hover:text-primary'
                                 }
               `}
-                        >
-                            <ChevronDown className="w-5 h-5 transition-transform" />
-                        </button>
+                            >
+                                <ChevronDown className="w-5 h-5 transition-transform" />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -267,6 +301,22 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
                     </div>
                 </div>
             </div>
+
+            {/* Bilan Modal */}
+            {showBilan && (
+                <PartnerBilanModal
+                    partner={partner}
+                    year={year}
+                    stats={{
+                        workedDays,
+                        expectedWorkedDays,
+                        usedVacationDays,
+                        holidayDaysDeducted,
+                        recovery,
+                    }}
+                    onClose={closeBilan}
+                />
+            )}
         </div>
     );
 }

@@ -1,7 +1,7 @@
 import { isWeekend, parseISO, eachDayOfInterval, startOfYear, endOfYear, format } from 'date-fns';
 import { isWorkedHoliday } from './holidays.js';
 import { stripPart, getDayValue } from './halfDays.js';
-import { getWorkedWithException } from './exceptions.js';
+import { getWorkedWithException, getBaseWorked } from './exceptions.js';
 
 /**
  * Calculate the number of working days taken between two dates for a specific partner.
@@ -222,6 +222,75 @@ export function calculateExpectedWorkedDays(year, partnerWorkDays, holidays, wor
     });
 
     return count;
+}
+
+/**
+ * Calcule le solde de jours de récupération d'un associé pour l'année.
+ *
+ * - gagnés : jours travaillés au-delà du planning de base
+ *   (formation reçue/donnée posée sur un jour non travaillé : FULL -> 1j, demi -> 0.5j ;
+ *    ajustement manuel forçant un jour travaillé en plus : jour complet -> 1j, +0.5 -> 0.5j)
+ * - pris : jours retirés via un ajustement « - » sur un jour normalement travaillé
+ *   (false -> 1j, -0.5 -> 0.5j)
+ * - à prendre : gagnés - pris
+ *
+ * Les absences (congés, AFVAC, maladie) ne créent ni ne consomment de récupération.
+ *
+ * @param {number} year
+ * @param {Object} partnerWorkDays - Fallback if periods is empty
+ * @param {Object} holidays
+ * @param {string[]} trainingsReceived
+ * @param {string[]} trainingsGiven
+ * @param {Array} workPeriods
+ * @param {Object} workDayExceptions
+ * @param {boolean} pentecoteWorked
+ * @returns {{earned: number, taken: number, remaining: number}}
+ */
+export function calculateRecoveryBalance(year, partnerWorkDays, holidays, trainingsReceived = [], trainingsGiven = [], workPeriods = [], workDayExceptions = {}, pentecoteWorked = true) {
+    const yearStart = startOfYear(new Date(year, 0, 1));
+    const yearEnd = endOfYear(yearStart);
+    const days = eachDayOfInterval({ start: yearStart, end: yearEnd });
+
+    let earned = 0;
+    let taken = 0;
+
+    days.forEach(day => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+
+        // Base planning (0 | 1) : week-end, férié (Pentecôte selon réglage) et jour off = 0
+        const base = getBaseWorked(day, partnerWorkDays, holidays, workPeriods, pentecoteWorked);
+
+        const trainingVal = Math.max(
+            getDayValue(trainingsReceived, dateStr),
+            getDayValue(trainingsGiven, dateStr)
+        );
+
+        // Jour travaillé effectif (0 | 0.5 | 1), hors absences
+        let worked = base;
+        const exception = workDayExceptions[dateStr];
+        if (exception === true) worked = 1;
+        else if (exception === false) worked = 0;
+        else if (exception === 0.5 || exception === -0.5) worked = Math.max(base, 0.5);
+
+        // Formation : journée entière => 1j travaillé ; demi-journée => 0.5j si posée sur repos
+        if (trainingVal >= 1) {
+            worked = Math.max(worked, 1);
+        } else if (trainingVal > 0 && base === 0) {
+            worked = Math.max(worked, 0.5);
+        }
+
+        // Droit à récupération pour tout jour travaillé au-delà du planning de base
+        if (worked > base) earned += worked - base;
+
+        // Prise de récupération : ajustement « - » sur un jour normalement travaillé
+        if (base >= 1 && (exception === false || exception === -0.5)) {
+            taken += exception === false ? 1 : 0.5;
+        }
+    });
+
+    earned = Math.round(earned * 2) / 2;
+    taken = Math.round(taken * 2) / 2;
+    return { earned, taken, remaining: Math.round((earned - taken) * 2) / 2 };
 }
 
 /**
