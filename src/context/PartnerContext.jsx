@@ -76,6 +76,7 @@ export function PartnerProvider({ children }) {
     const [database, setDatabase] = useState({ partners: [] }); // { partners: [], settings: {} }
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [loadFailed, setLoadFailed] = useState(false);
 
     const isSavingRef = useRef(false);
 
@@ -101,6 +102,7 @@ export function PartnerProvider({ children }) {
                 }
             } catch (error) {
                 console.error('Error loading data from Firebase:', error);
+                setLoadFailed(true);
             } finally {
                 setIsLoading(false);
             }
@@ -115,6 +117,7 @@ export function PartnerProvider({ children }) {
         const unsubscribe = subscribeToVacationData((data, hasPendingWrites) => {
             if (data && !hasPendingWrites && !isSavingRef.current && data.partners) {
                 setDatabase(sanitizeDatabase(data));
+                setLoadFailed(false);
             }
         });
 
@@ -215,8 +218,42 @@ export function PartnerProvider({ children }) {
     };
 
     const updatePartner = (id, updates) => {
+        if (loadFailed) return;
         const newPartners = database.partners.map(p => p.id === id ? { ...p, ...updates } : p);
         const newDb = { ...database, partners: newPartners };
+        setDatabase(newDb);
+        persistData(newDb);
+    };
+
+    const addPartner = (firstName) => {
+        const name = (firstName || '').trim();
+        if (!name || loadFailed) return;
+        // crypto.randomUUID si dispo (contexte sécurisé), fallback horodaté+aléatoire
+        const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+            ? crypto.randomUUID()
+            : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        const newPartner = {
+            id,
+            name,
+            workDays: { ...DEFAULT_WORK_DAYS },
+            workPeriods: [
+                { startDate: `${year}-01-01`, workDays: { ...DEFAULT_WORK_DAYS } }
+            ],
+            allocations: { ...DEFAULT_ALLOCATION },
+            vacations: [],
+            trainingsGiven: [],
+            trainingsReceived: [],
+            afvac: [],
+            sickLeave: [],
+        };
+        const newDb = { ...database, partners: [...database.partners, newPartner] };
+        setDatabase(newDb);
+        persistData(newDb);
+    };
+
+    const removePartner = (id) => {
+        if (loadFailed || !database.partners.some(p => p.id === id)) return;
+        const newDb = { ...database, partners: database.partners.filter(p => p.id !== id) };
         setDatabase(newDb);
         persistData(newDb);
     };
@@ -731,6 +768,9 @@ export function PartnerProvider({ children }) {
             pentecoteWorked,
             setPentecoteOff,
             updatePartner,
+            addPartner,
+            removePartner,
+            loadFailed,
             updateAllocation,
             toggleWorkDay,
             updateWorkPeriods,
