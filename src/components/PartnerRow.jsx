@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { ChevronDown, ChevronUp, Settings, Calendar, Briefcase, Info, BarChart3 } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
+import { getFirstName } from '../utils/names';
 import { calculateDeductedDays, calculateWorkedDays, calculateNormalTrainingAllocation, calculateExpectedWorkedDays, calculateRecoveryBalance } from '../utils/dateUtils';
 import { isWorkedHoliday } from '../utils/holidays';
 import { sumDays, formatDays } from '../utils/halfDays';
@@ -147,7 +148,7 @@ export default function PartnerRow({ partner, isExpanded, onToggle }) {
 
                     <div>
                         <h3 className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">
-                            {partner.name.split(' ')[0]}
+                            {getFirstName(partner.name)}
                         </h3>
                     </div>
                 </div>

@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { Calendar, Users, Plus, Trash2, X, ChevronDown, AlertTriangle, Pencil } from 'lucide-react';
 import { usePartnerContext } from '../context/PartnerContext';
+import { getFirstName, getLastName, buildFullName } from '../utils/names';
 
 export default function Layout({ children }) {
   const { year, partners, addPartner, removePartner, updatePartner, loadFailed } = usePartnerContext();
 
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
-  const [newName, setNewName] = useState('');
+  const [newFirst, setNewFirst] = useState('');
+  const [newLast, setNewLast] = useState('');
   const [confirmingId, setConfirmingId] = useState(null);
   const [confirmText, setConfirmText] = useState('');
   const [editingId, setEditingId] = useState(null);
-  const [editName, setEditName] = useState('');
+  const [editFirst, setEditFirst] = useState('');
+  const [editLast, setEditLast] = useState('');
 
   const popoverRef = useRef(null);
   const nameInputRef = useRef(null);
@@ -20,8 +23,10 @@ export default function Layout({ children }) {
     setConfirmingId(null);
     setConfirmText('');
     setEditingId(null);
-    setEditName('');
-    setNewName('');
+    setEditFirst('');
+    setEditLast('');
+    setNewFirst('');
+    setNewLast('');
   };
 
   useEffect(() => {
@@ -33,7 +38,8 @@ export default function Layout({ children }) {
       if (e.key !== 'Escape') return;
       if (editingId) {
         setEditingId(null);
-        setEditName('');
+        setEditFirst('');
+        setEditLast('');
       } else if (confirmingId) {
         setConfirmingId(null);
         setConfirmText('');
@@ -50,11 +56,12 @@ export default function Layout({ children }) {
   }, [isPopoverOpen, confirmingId, editingId]);
 
   const handleRename = (partner) => {
-    const trimmed = editName.trim();
+    const full = buildFullName(editFirst, editLast);
     setEditingId(null);
-    setEditName('');
-    if (!trimmed || trimmed === partner.name) return;
-    updatePartner(partner.id, { name: trimmed });
+    setEditFirst('');
+    setEditLast('');
+    if (!full || full === partner.name) return;
+    updatePartner(partner.id, { name: full });
   };
 
   const openPopover = () => {
@@ -62,16 +69,18 @@ export default function Layout({ children }) {
     setConfirmingId(null);
     setConfirmText('');
     setEditingId(null);
-    setEditName('');
-    setNewName('');
+    setEditFirst('');
+    setEditLast('');
+    setNewFirst('');
+    setNewLast('');
     setTimeout(() => nameInputRef.current?.focus(), 0);
   };
 
   const handleAdd = () => {
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    addPartner(trimmed);
-    setNewName('');
+    if (!newFirst.trim()) return;
+    addPartner(newFirst, newLast);
+    setNewFirst('');
+    setNewLast('');
     nameInputRef.current?.focus();
   };
 
@@ -117,7 +126,7 @@ export default function Layout({ children }) {
               {isPopoverOpen && (
                 <div
                   ref={popoverRef}
-                  className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 animate-in fade-in zoom-in-95 duration-200"
+                  className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 animate-in fade-in zoom-in-95 duration-200"
                 >
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-[10px] uppercase tracking-bold font-bold text-gray-400">Gestion des associés</p>
@@ -142,17 +151,26 @@ export default function Layout({ children }) {
                   <div className="flex gap-2 mb-4">
                     <input
                       ref={nameInputRef}
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
+                      value={newFirst}
+                      onChange={(e) => setNewFirst(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-                      placeholder="Prénom du nouvel associé"
+                      placeholder="Prénom"
                       aria-label="Prénom du nouvel associé"
                       maxLength={30}
                       className="flex-1 min-w-0 px-3 py-2 text-sm rounded-xl border border-gray-200 bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
                     />
+                    <input
+                      value={newLast}
+                      onChange={(e) => setNewLast(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+                      placeholder="Nom"
+                      aria-label="Nom du nouvel associé (optionnel)"
+                      maxLength={30}
+                      className="w-24 px-3 py-2 text-sm rounded-xl border border-gray-200 bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                    />
                     <button
                       onClick={handleAdd}
-                      disabled={!newName.trim() || loadFailed}
+                      disabled={!newFirst.trim() || loadFailed}
                       title="Ajouter"
                       aria-label="Ajouter l'associé"
                       className="w-9 h-9 shrink-0 rounded-xl bg-primary text-white flex items-center justify-center hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -208,28 +226,39 @@ export default function Layout({ children }) {
                     ) : editingId === p.id ? (
                       <div key={p.id} className="p-3 rounded-xl bg-gray-50 border border-gray-200">
                         <p className="text-[11px] text-gray-500 mb-2">
-                          Modifier le nom de <span className="font-bold">{p.name}</span>
+                          Modifier le nom de <span className="font-bold">{getFirstName(p.name)}</span>
                         </p>
-                        <input
-                          autoFocus
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter' && editName.trim()) handleRename(p); }}
-                          placeholder="Nouveau prénom"
-                          aria-label={`Nouveau prénom pour ${p.name}`}
-                          maxLength={30}
-                          className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 mb-2"
-                        />
+                        <div className="flex gap-2 mb-2">
+                          <input
+                            autoFocus
+                            value={editFirst}
+                            onChange={(e) => setEditFirst(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && editFirst.trim()) handleRename(p); }}
+                            placeholder="Prénom"
+                            aria-label={`Nouveau prénom pour ${p.name}`}
+                            maxLength={30}
+                            className="flex-1 min-w-0 px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <input
+                            value={editLast}
+                            onChange={(e) => setEditLast(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && editFirst.trim()) handleRename(p); }}
+                            placeholder="Nom"
+                            aria-label={`Nouveau nom pour ${p.name} (optionnel)`}
+                            maxLength={30}
+                            className="w-24 px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                        </div>
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => { setEditingId(null); setEditName(''); }}
+                            onClick={() => { setEditingId(null); setEditFirst(''); setEditLast(''); }}
                             className="px-3 py-1.5 text-xs font-semibold rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
                           >
                             Annuler
                           </button>
                           <button
                             onClick={() => handleRename(p)}
-                            disabled={!editName.trim() || editName.trim() === p.name}
+                            disabled={!editFirst.trim() || buildFullName(editFirst, editLast) === p.name}
                             className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-white hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             Renommer
@@ -238,10 +267,15 @@ export default function Layout({ children }) {
                       </div>
                     ) : (
                       <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded-xl hover:bg-gray-50 transition-colors">
-                        <span className="text-sm font-medium text-gray-700">{p.name}</span>
-                        <div className="flex items-center gap-1">
+                        <div className="min-w-0">
+                          <span className="block text-sm font-medium text-gray-700 truncate">{getFirstName(p.name)}</span>
+                          {getLastName(p.name) && (
+                            <span className="block text-[11px] text-gray-400 truncate">{getLastName(p.name)}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
                           <button
-                            onClick={() => { setEditingId(p.id); setEditName(p.name); setConfirmingId(null); setConfirmText(''); }}
+                            onClick={() => { setEditingId(p.id); setEditFirst(getFirstName(p.name)); setEditLast(getLastName(p.name)); setConfirmingId(null); setConfirmText(''); }}
                             title={`Modifier le nom de ${p.name}`}
                             aria-label={`Modifier le nom de ${p.name}`}
                             className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-primary hover:bg-primary/5 transition-colors"
@@ -249,7 +283,7 @@ export default function Layout({ children }) {
                             <Pencil className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => { setConfirmingId(p.id); setConfirmText(''); setEditingId(null); setEditName(''); }}
+                            onClick={() => { setConfirmingId(p.id); setConfirmText(''); setEditingId(null); setEditFirst(''); setEditLast(''); }}
                             title={`Supprimer ${p.name}`}
                             aria-label={`Supprimer ${p.name}`}
                             className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"

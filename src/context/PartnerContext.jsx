@@ -3,16 +3,17 @@ import { getFrenchHolidays, isWorkedHoliday, isPentecoteOff } from '../utils/hol
 import { DEFAULT_WORK_DAYS, calculateAnnualVacationAllocation } from '../utils/dateUtils';
 import { getDayValue, getDayPart, removeDate, addDate, stripPart } from '../utils/halfDays';
 import { sanitizeExceptions, getBaseWorked, getHalfAdjustmentValue } from '../utils/exceptions.js';
+import { buildFullName } from '../utils/names';
 import { getVacationData, saveVacationData, subscribeToVacationData } from '../firebase';
 
 const PartnerContext = createContext();
 
 const INITIAL_PARTNERS = [
-    { id: '1', name: 'Nina' },
-    { id: '2', name: 'Claire' },
-    { id: '3', name: 'Michael' },
-    { id: '4', name: 'Emilie' },
-    { id: '5', name: 'Pauline' },
+    { id: '1', name: 'Nina Lucas' },
+    { id: '2', name: 'Claire Deroy' },
+    { id: '3', name: 'Michael Bennaim' },
+    { id: '4', name: 'Emilie Fauchon' },
+    { id: '5', name: 'Pauline Denoeux' },
 ];
 
 const DEFAULT_ALLOCATION = {
@@ -225,8 +226,8 @@ export function PartnerProvider({ children }) {
         persistData(newDb);
     };
 
-    const addPartner = (firstName) => {
-        const name = (firstName || '').trim();
+    const addPartner = (firstName, lastName) => {
+        const name = buildFullName(firstName, lastName);
         if (!name || loadFailed) return;
         // crypto.randomUUID si dispo (contexte sécurisé), fallback horodaté+aléatoire
         const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')

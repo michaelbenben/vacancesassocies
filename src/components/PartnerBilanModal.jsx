@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { X, Briefcase, Plane, CalendarDays, GraduationCap, BookOpen, Stethoscope, SlidersHorizontal, RefreshCw } from 'lucide-react';
 import { sumDays, formatDays } from '../utils/halfDays';
+import { getFirstName } from '../utils/names';
 
 export default function PartnerBilanModal({ partner, stats, year, onClose }) {
     const closeRef = useRef(null);
@@ -115,7 +116,7 @@ export default function PartnerBilanModal({ partner, stats, year, onClose }) {
                 {/* Header */}
                 <div className="sticky top-0 flex items-center justify-between p-5 border-b border-gray-100 bg-white rounded-t-2xl">
                     <div>
-                        <h2 id="bilan-title" className="text-lg font-bold text-gray-900">{partner.name}</h2>
+                        <h2 id="bilan-title" className="text-lg font-bold text-gray-900">{getFirstName(partner.name)}</h2>
                         <p className="text-xs font-medium text-gray-400">Bilan de l'année {year}</p>
                     </div>
                     <button
